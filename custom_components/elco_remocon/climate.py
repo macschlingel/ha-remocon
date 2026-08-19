@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature, HVACAction, HVACMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
@@ -14,8 +12,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, MODE_AUTOMATIC, MODE_COMFORT, MODE_PROTECTION, MODE_REDUCTION
 from .coordinator import ElcoRemoconCoordinator
 
-_LOGGER = logging.getLogger(__name__)
-
 PRESET_COMFORT = "comfort"
 PRESET_REDUCED = "reduced"
 
@@ -25,14 +21,6 @@ HVAC_MODE_MAP = {
     MODE_REDUCTION: HVACMode.HEAT,
     MODE_COMFORT: HVACMode.HEAT,
 }
-
-HVAC_ACTION_MAP = {
-    MODE_PROTECTION: HVACAction.OFF,
-    MODE_AUTOMATIC: HVACAction.HEATING,  # Will be overridden by active state
-    MODE_REDUCTION: HVACAction.HEATING,
-    MODE_COMFORT: HVACAction.HEATING,
-}
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -65,13 +53,7 @@ class ElcoClimateEntity(CoordinatorEntity[ElcoRemoconCoordinator], ClimateEntity
         super().__init__(coordinator)
         gw_id = entry.data["gateway_id"]
         self._attr_unique_id = f"{gw_id}_climate_zone_{entry.data.get('zone', '1')}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, gw_id)},
-            "name": "Remocon-Net Heat Pump",
-            "manufacturer": "Elco",
-            "model": "Aerotop SPK",
-        }
-        self._gw_id = gw_id
+        self._attr_device_info = coordinator.device_info
 
     @property
     def current_temperature(self) -> float | None:

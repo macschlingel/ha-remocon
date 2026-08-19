@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Optional
 from urllib.parse import quote
 
@@ -22,24 +21,25 @@ _LOGGER = logging.getLogger(__name__)
 BASE_URL = "https://www.remocon-net.remotethermo.com"
 
 FEATURES_PAYLOAD = {
+    "gatewayId": "",
     "zones": [{"num": 1, "name": "", "roomSens": False, "geofenceDeroga": False,
                "virtInfo": None, "isHidden": False}],
-    "solar": False, "convBoiler": False, "commBoiler": False, "hpSys": False,
+    "solar": False, "convBoiler": False, "commBoiler": False, "hpSys": True,
     "hybridSys": False, "cascadeSys": False, "dhwProgSupported": True,
     "virtualZones": False, "hasVmc": False, "extendedTimeProg": False,
-    "hasBoiler": True, "pilotSupported": False, "isVmcR2": False,
+    "hasBoiler": False, "pilotSupported": True, "isVmcR2": False,
     "isEvo2": False, "dhwHidden": False, "dhwBoilerPresent": True,
-    "dhwModeChangeable": True, "hvInputOff": False, "autoThermoReg": False,
-    "hasMetering": False, "hasFireplace": False, "hasSlp": False,
-    "hasEm20": False, "hasEm30": False, "systemServices": 0,
-    "hasTwoCoolingTemp": False, "bmsActive": False, "hpCascadeSys": False,
-    "hpCascadeConfig": -1, "bufferTimeProgAvailable": False,
-    "distinctHeatCoolSetpoints": False, "hasZoneNames": False,
-    "zoneManagerStandAlone": False, "hydraulicScheme": None,
+    "dhwModeChangeable": True, "hvInputOff": False, "autoThermoReg": True,
+    "hasMetering": True, "hasFireplace": False, "hasSlp": False,
+    "hasEm20": True, "hasEm30": False, "systemServices": None,
+    "hasTwoCoolingTemp": True, "bmsActive": False, "hpCascadeSys": False,
+    "hpCascadeSysPcm5": False, "hpCascadeConfig": -1, "bufferTimeProgAvailable": True,
+    "distinctHeatCoolSetpoints": True, "hasZoneNames": True,
+    "zoneManagerStandAlone": False, "hydraulicScheme": 5,
     "preHeatingSupported": False, "hasGahp": False, "zigbeeActive": False,
     "hasSlpAloneOnBus": False, "isSlpCascade": False,
     "hasZeroColdWaterProg": False, "weatherProvider": 0,
-    "hasDhwTimeProgTemperatures": 2, "isGSWHCommercialAloneOnBus": False,
+    "hasDhwTimeProgTemperatures": 1, "isGSWHCommercialAloneOnBus": False,
 }
 
 
@@ -69,6 +69,8 @@ class RemoconData:
     comfort_temp_max: float = 35.0
     comfort_temp_step: float = 0.5
     reduced_temp: float = 0.0
+    cooling_comfort_temp: float = 0.0
+    cooling_reduced_temp: float = 0.0
     desired_temp: float = 0.0
     room_temp: float = 0.0
     zone_mode: int = MODE_AUTOMATIC
@@ -76,20 +78,34 @@ class RemoconData:
     heating_active: bool = False
     cooling_active: bool = False
     heat_or_cool_request: bool = False
+    zone_deroga: float = 0.0
     # Plant
     outside_temp: float = 0.0
+    plant_mode: int = 0
+    plant_mode_text: str = "Unknown"
+    automatic_thermoregulation: bool = False
+    holiday: bool = False
     dhw_temp: float = 0.0
+    dhw_target_temp: float = 0.0
     dhw_comfort_temp: float = 0.0
     dhw_reduced_temp: float = 0.0
     dhw_mode: int = 0
     dhw_enabled: bool = False
     heat_pump_on: bool = False
     flame_sensor: bool = False
-    # System (from v2 API)
+    # System
     system_pressure: Optional[float] = None
-    flow_temperature: Optional[float] = None
+    flow_setpoint_temperature: Optional[float] = None
+    zone_pilot_on: bool = False
     # Meta
     has_room_sensor: bool = False
+    plant_address: str | None = None
+    appliance_model: str | None = None
+    gateway_online: bool = False
+    gateway_status: str | None = None
+    quiet_mode_start: str | None = None
+    quiet_mode_end: str | None = None
+    quiet_mode_active: bool = False
 
 
 class RemoconClient:
@@ -161,63 +177,80 @@ class RemoconClient:
             _LOGGER.error("Invalid JSON response from API: %s", resp.text)
             raise RemoconDataError("Could not parse API response") from err
 
+    def _features(self) -> dict[str, Any]:
+        """Return a gateway-specific copy of the web UI feature profile."""
+        features = dict(FEATURES_PAYLOAD)
+        features["gatewayId"] = self._gateway_id
+        return features
+
     def _get_raw(self) -> dict:
         path = f"/R2/PlantHome/GetData/{self._gateway_id}?umsys=si"
         payload = {
             "useCache": True,
             "zone": int(self._zone),
             "filter": {"notEssentials": False, "plant": True, "zone": True, "dhw": True},
-            "features": FEATURES_PAYLOAD,
+            "features": self._features(),
         }
-        data = self._request("POST", path, json=payload)
+        headers = {
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Ajax-Request": "json",
+            "X-Requested-With": "XMLHttpRequest",
+        }
+        data = self._request("POST", path, headers=headers, json=payload)
         if not data:
             raise RemoconDataError("Empty data received from API")
         if isinstance(data, dict) and not data.get("ok", True):
             _LOGGER.error("API returned error: %s", data)
             raise RemoconDataError(data.get("message", "API returned error"))
-        return data.get("data", data) if isinstance(data, dict) else data
+        raw = data.get("data", data) if isinstance(data, dict) else data
+        if not isinstance(raw, dict):
+            raise RemoconDataError(f"Unexpected data format from API: {type(raw)}")
 
-    def _get_system_items(self, item_ids: list[dict]) -> dict[str, Any]:
-        path = f"/api/v2/remote/dataItems/{self._gateway_id}/get?umsys=si"
-        payload = {
-            "useCache": False,
-            "items": item_ids,
-            "features": FEATURES_PAYLOAD,
-            "culture": "de",
-        }
-        data = self._request("POST", path, json=payload)
-        return {item["id"]: item.get("value") for item in data.get("items", [])} if isinstance(data, dict) else {}
+        _LOGGER.debug(
+            "Plant data response for gateway %s: top-level keys=%s, data keys=%s",
+            self._gateway_id,
+            sorted(data) if isinstance(data, dict) else type(data).__name__,
+            sorted(raw),
+        )
+        if "items" not in raw and (
+            "plantData" not in raw or "zoneData" not in raw
+        ):
+            raise RemoconDataError(
+                "API response does not contain items or plantData/zoneData "
+                f"(keys: {sorted(raw)})"
+            )
+        return raw
 
     def get_data(self) -> RemoconData:
         """Fetch all data and return a RemoconData object."""
         raw = self._get_raw()
-        if not isinstance(raw, dict):
-            raise RemoconDataError(f"Unexpected data format from API: {type(raw)}")
-            
+        try:
+            header = self._get_header()
+        except RemoconApiError as err:
+            _LOGGER.debug("Could not fetch plant header: %s", err)
+            header = {}
+        try:
+            advanced = self._get_advanced_settings(raw.get("features", FEATURES_PAYLOAD))
+        except RemoconApiError as err:
+            _LOGGER.debug("Could not fetch advanced settings: %s", err)
+            advanced = {}
+        if "items" in raw:
+            data = self._parse_items(raw["items"])
+            data = self._add_header_data(data, header)
+            return self._add_advanced_data(data, advanced)
+
         plant = raw.get("plantData") or {}
         zone = raw.get("zoneData") or {}
-
-        sys_items: dict[str, Any] = {}
-        try:
-            sys_items = self._get_system_items([
-                {"id": "HeatingCircuitPressure", "zn": 0},
-                {"id": "ChFlowTemp", "zn": 0},
-            ])
-        except Exception as err:
-            _LOGGER.debug("Could not fetch system items from v2 API: %s", err)
 
         ch_comfort = zone.get("chComfortTemp") or {}
         ch_reduced = zone.get("chReducedTemp") or {}
         mode_info = zone.get("mode") or {}
 
-        pressure = sys_items.get("HeatingCircuitPressure")
-        flow = sys_items.get("ChFlowTemp")
-
         dhw_comfort = plant.get("dhwComfortTemp") or {}
         dhw_reduced = plant.get("dhwReducedTemp") or {}
         dhw_mode_info = plant.get("dhwMode") or {}
 
-        return RemoconData(
+        data = RemoconData(
             comfort_temp=float(ch_comfort.get("value", 0)),
             comfort_temp_min=float(ch_comfort.get("min", 5)),
             comfort_temp_max=float(ch_comfort.get("max", 35)),
@@ -238,23 +271,173 @@ class RemoconClient:
             dhw_enabled=bool(plant.get("dhwEnabled", 0)),
             heat_pump_on=bool(plant.get("heatPumpOn", 0)),
             flame_sensor=bool(plant.get("flameSensor", 0)),
-            system_pressure=float(pressure) if pressure is not None else None,
-            flow_temperature=float(flow) if flow is not None else None,
+            system_pressure=None,
             has_room_sensor=bool(zone.get("hasRoomSensor", 0)),
         )
+        data = self._add_header_data(data, header)
+        return self._add_advanced_data(data, advanced)
+
+    def _get_header(self) -> dict[str, Any]:
+        """Fetch plant identity and gateway status shown in the web UI."""
+        path = f"/R2/Plant/PlantHeader/{self._gateway_id}?rnd=0"
+        data = self._request("GET", path)
+        return data.get("data", {}) if isinstance(data, dict) else {}
+
+    def _get_advanced_settings(self, features: dict[str, Any]) -> dict[str, Any]:
+        """Fetch advanced settings using the same AJAX contract as the web UI."""
+        path = f"/R2/PlantAdvancedSettings/Refresh/{self._gateway_id}"
+        advanced_features = dict(features)
+        advanced_features["gatewayId"] = self._gateway_id
+        response = self._request(
+            "POST",
+            path,
+            headers={
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Ajax-Request": "json",
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            json={"features": advanced_features},
+        )
+        data = response.get("data", {}) if isinstance(response, dict) else {}
+        return {item["id"]: item for item in data.get("dataItems", []) if item.get("id")}
+
+    @staticmethod
+    def _add_header_data(data: RemoconData, header: dict[str, Any]) -> RemoconData:
+        """Add web UI plant-header data to the common data model."""
+        data.plant_address = header.get("plantAddress")
+        data.appliance_model = header.get("applianceModel")
+        data.gateway_online = bool(header.get("gwOnline", False))
+        data.gateway_status = header.get("errorText")
+        return data
+
+    @staticmethod
+    def _add_advanced_data(
+        data: RemoconData, advanced: dict[str, Any]
+    ) -> RemoconData:
+        """Add advanced settings returned by the Plant web UI."""
+        start = advanced.get("QuietModeStart", {}).get("value")
+        end = advanced.get("QuietModeEnd", {}).get("value")
+        data.quiet_mode_start = RemoconClient._format_time_value(start)
+        data.quiet_mode_end = RemoconClient._format_time_value(end)
+        data.quiet_mode_active = bool(advanced.get("IsQuite", {}).get("value", 0))
+        return data
+
+    @staticmethod
+    def _format_time_value(value: Any) -> str | None:
+        """Convert the API's fixed-point time value to HH:MM."""
+        if value is None:
+            return None
+        try:
+            total_minutes = round(float(value) / 256 * 60)
+            hours, minutes = divmod(total_minutes, 60)
+            return f"{hours % 24:02d}:{minutes:02d}"
+        except (TypeError, ValueError):
+            return None
+
+    def _parse_items(
+        self, items: list[dict[str, Any]]
+    ) -> RemoconData:
+        """Convert the current flat R2 data-item response to RemoconData."""
+        values = self._item_values(items)
+
+        def item_value(item_id: str, default: Any = 0) -> Any:
+            return values.get(item_id, {}).get("value", default)
+
+        def item_float(item_id: str, default: float = 0.0) -> float:
+            try:
+                return float(item_value(item_id, default))
+            except (TypeError, ValueError):
+                return default
+
+        mode_item = values.get("ZoneMode", {})
+        mode_texts = mode_item.get("optTexts") or []
+        plant_mode_item = values.get("PlantMode", {})
+        plant_mode = int(item_float("PlantMode"))
+        plant_options = plant_mode_item.get("options") or []
+        plant_texts = plant_mode_item.get("optTexts") or []
+        plant_mode_text = "Unknown"
+        if plant_mode in plant_options:
+            plant_mode_text = str(plant_texts[plant_options.index(plant_mode)])
+        raw_zone_mode = int(item_float("ZoneMode"))
+        zone_mode = {
+            0: MODE_PROTECTION,
+            2: MODE_COMFORT,
+            3: MODE_AUTOMATIC,
+        }.get(raw_zone_mode, MODE_AUTOMATIC)
+        zone_mode_texts = [str(text) for text in mode_texts]
+
+        return RemoconData(
+            comfort_temp=item_float("ZoneComfortTemp"),
+            comfort_temp_min=item_float("ZoneComfortTemp", 5.0)
+            if "ZoneComfortTemp" not in values
+            else float(values["ZoneComfortTemp"].get("min", 5.0)),
+            comfort_temp_max=item_float("ZoneComfortTemp", 35.0)
+            if "ZoneComfortTemp" not in values
+            else float(values["ZoneComfortTemp"].get("max", 35.0)),
+            comfort_temp_step=item_float("ZoneComfortTemp", 0.5)
+            if "ZoneComfortTemp" not in values
+            else float(values["ZoneComfortTemp"].get("step", 0.5)),
+            reduced_temp=item_float("ZoneEconomyTemp"),
+            cooling_comfort_temp=item_float("ZoneComfortCoolingTemp"),
+            cooling_reduced_temp=item_float("ZoneEconomyCoolingTemp"),
+            desired_temp=item_float("ZoneDesiredTemp"),
+            room_temp=item_float("ZoneMeasuredTemp"),
+            zone_mode=zone_mode,
+            zone_mode_texts=zone_mode_texts,
+            heating_active=False,
+            cooling_active=int(item_float("PlantMode")) == 3,
+            heat_or_cool_request=False,
+            zone_deroga=item_float("ZoneDeroga"),
+            outside_temp=item_float("OutsideTemp"),
+            plant_mode=plant_mode,
+            plant_mode_text=plant_mode_text,
+            automatic_thermoregulation=bool(
+                item_value("AutomaticThermoregulation", 0)
+            ),
+            holiday=bool(item_float("Holiday")),
+            dhw_temp=item_float("DhwStorageTemperature"),
+            dhw_target_temp=item_float("DhwTemp"),
+            dhw_comfort_temp=item_float("DhwTimeProgComfortTemp"),
+            dhw_reduced_temp=item_float("DhwTimeProgEconomyTemp"),
+            dhw_mode=int(item_float("DhwMode")),
+            dhw_enabled=int(item_float("DhwMode")) != 0,
+            heat_pump_on=int(item_float("PlantMode")) in (1, 2, 3),
+            system_pressure=(
+                item_float("HeatingCircuitPressure")
+                if "HeatingCircuitPressure" in values
+                else None
+            ),
+            flow_setpoint_temperature=item_float("ChFlowSetpointTemp")
+            if "ChFlowSetpointTemp" in values
+            else None,
+            zone_pilot_on=bool(item_value("IsZonePilotOn", 0)),
+            has_room_sensor="ZoneMeasuredTemp" in values,
+        )
+
+    @staticmethod
+    def _item_values(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """Index data items by ID."""
+        return {item["id"]: item for item in items if item.get("id")}
+
+    @classmethod
+    def _raw_item_values(cls, raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """Return indexed items when the current response schema is used."""
+        items = raw.get("items")
+        return cls._item_values(items) if isinstance(items, list) else {}
 
     def set_zone_temperatures(
         self, comfort: float | None = None, reduced: float | None = None
     ) -> None:
         """Set comfort and/or reduced temperature."""
         raw = self._get_raw()
+        items = self._raw_item_values(raw)
         if not isinstance(raw, dict):
             raw = {}
         zone = raw.get("zoneData") or {}
         ch_comf = zone.get("chComfortTemp") or {}
         ch_red = zone.get("chReducedTemp") or {}
-        old_comf = float(ch_comf.get("value", 0))
-        old_econ = float(ch_red.get("value", 0))
+        old_comf = float(items.get("ZoneComfortTemp", ch_comf).get("value", 0))
+        old_econ = float(items.get("ZoneEconomyTemp", ch_red).get("value", 0))
 
         new_comf = comfort if comfort is not None else old_comf
         new_econ = reduced if reduced is not None else old_econ
@@ -271,11 +454,17 @@ class RemoconClient:
     def set_zone_mode(self, mode: int) -> None:
         """Set zone operation mode."""
         raw = self._get_raw()
+        items = self._raw_item_values(raw)
         if not isinstance(raw, dict):
             raw = {}
         zone = raw.get("zoneData") or {}
         mode_info = zone.get("mode") or {}
         old_mode = mode_info.get("value", MODE_AUTOMATIC)
+        if "ZoneMode" in items:
+            raw_mode = int(items["ZoneMode"].get("value", 3))
+            old_mode = {0: MODE_PROTECTION, 2: MODE_COMFORT, 3: MODE_AUTOMATIC}.get(
+                raw_mode, MODE_AUTOMATIC
+            )
 
         path = (
             f"/api/v2/remote/bsbZones/{self._gateway_id}"
@@ -288,13 +477,18 @@ class RemoconClient:
     ) -> None:
         """Set DHW temperatures."""
         raw = self._get_raw()
+        items = self._raw_item_values(raw)
         if not isinstance(raw, dict):
             raw = {}
         plant = raw.get("plantData") or {}
         dhw_comf = plant.get("dhwComfortTemp") or {}
         dhw_red = plant.get("dhwReducedTemp") or {}
-        old_comf = float(dhw_comf.get("value", 0))
-        old_econ = float(dhw_red.get("value", 0))
+        old_comf = float(
+            items.get("DhwTimeProgComfortTemp", dhw_comf).get("value", 0)
+        )
+        old_econ = float(
+            items.get("DhwTimeProgEconomyTemp", dhw_red).get("value", 0)
+        )
 
         new_comf = comfort if comfort is not None else old_comf
         new_econ = reduced if reduced is not None else old_econ

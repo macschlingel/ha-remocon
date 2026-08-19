@@ -4,6 +4,7 @@
   "codeowners": ["@bastian"],
   "config_flow": true,
   "documentation": "https://github.com/macschlingel/ha-remocon",
+  "icon": "icon.png",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/macschlingel/ha-remocon/issues",
   "requirements": [],

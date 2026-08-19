@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "ConvertFrom-Json": true,
+        "Out-Null": true,
+        "Set-ExecutionPolicy": true,
+        "&": true
+    }
+}
