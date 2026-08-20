@@ -3,41 +3,138 @@
     "step": {
       "user": {
         "title": "Remocon-Net (inoffiziell)",
-        "description": "Inoffizielle Integration — verbinde deine Elco Wärmepumpe über die Remocon-Net Cloud.",
+        "description": "Verbindet deine ELCO-Wärmepumpe über die Remocon-Net-Cloud.",
         "data": {
           "email": "E-Mail",
           "password": "Passwort",
-          "gateway_id": "Gateway ID",
+          "gateway_id": "Gateway-ID",
           "zone": "Zone"
         }
       }
     },
     "error": {
-      "auth": "Login fehlgeschlagen. E-Mail oder Passwort falsch.",
-      "connection": "Verbindung zur Remocon-Net Cloud fehlgeschlagen.",
-      "no_data": "Keine Daten von der Anlage erhalten. Gateway ID korrekt?"
+      "auth": "Anmeldung fehlgeschlagen. Prüfe E-Mail-Adresse und Passwort.",
+      "connection": "Verbindung zur Remocon-Net-Cloud fehlgeschlagen.",
+      "no_data": "Keine Anlagendaten empfangen. Prüfe Gateway-ID und Zone."
     }
   },
   "entity": {
+    "number": {
+      "dhw_comfort_temperature": { "name": "Warmwasser-Komforttemperatur einstellen" }
+    },
     "sensor": {
-      "outside_temperature": {
-        "name": "Außentemperatur"
+      "room_temperature": { "name": "Raumtemperatur" },
+      "outside_temperature": { "name": "Außentemperatur" },
+      "desired_temperature": { "name": "Aktuelle Solltemperatur" },
+      "comfort_temperature": { "name": "Komforttemperatur" },
+      "reduced_temperature": { "name": "Absenktemperatur" },
+      "cooling_comfort_temperature": { "name": "Kühlung Komforttemperatur" },
+      "cooling_reduced_temperature": { "name": "Kühlung Absenktemperatur" },
+      "flow_temperature": { "name": "Vorlauf-Solltemperatur" },
+      "system_pressure": { "name": "Anlagendruck" },
+      "dhw_temperature": { "name": "Warmwassertemperatur" },
+      "dhw_target_temperature": { "name": "Warmwasser-Solltemperatur" },
+      "dhw_comfort_temperature": { "name": "Warmwasser-Komforttemperatur" },
+      "dhw_reduced_temperature": { "name": "Warmwasser-Absenktemperatur" },
+      "summer_winter_threshold": { "name": "Sommer/Winter-Grenztemperatur" },
+      "summer_winter_delay": { "name": "Sommer/Winter-Verzögerung" },
+      "legionella_interval": { "name": "Legionellenschutz-Intervall" },
+      "buffer_heating_comfort_temperature": { "name": "Puffer Heizen Komforttemperatur" },
+      "buffer_heating_reduced_temperature": { "name": "Puffer Heizen Absenktemperatur" },
+      "buffer_cooling_comfort_temperature": { "name": "Puffer Kühlen Komforttemperatur" },
+      "buffer_cooling_reduced_temperature": { "name": "Puffer Kühlen Absenktemperatur" },
+      "pv_dhw_temperature_increase": { "name": "PV-Warmwasser-Temperaturanhebung" },
+      "wifi_signal_level": { "name": "WLAN-Signalpegel" },
+      "buffer_setpoint_mode": {
+        "name": "Puffer-Sollwertmodus",
+        "state": { "fixed": "Fest", "variable": "Variabel", "unknown": "Unbekannt" }
       },
-      "desired_temperature": {
-        "name": "Solltemperatur"
+      "external_heat_source_heating_mode": {
+        "name": "Externer Wärmeerzeuger Heizung",
+        "state": { "heat_integral_backup": "Wärmeintegral und Fehlerbackup", "backup_only": "Nur Fehlerbackup", "unknown": "Unbekannt" }
       },
-      "reduced_temperature": {
-        "name": "Absenktemperatur"
+      "external_heat_source_dhw_mode": {
+        "name": "Externer Wärmeerzeuger Warmwasser",
+        "state": { "heat_integral_backup": "Wärmeintegral und Fehlerbackup", "backup_only": "Nur Fehlerbackup", "unknown": "Unbekannt" }
       },
-      "flow_temperature": {
-        "name": "Vorlauftemperatur"
+      "dhw_heat_pump_mode": {
+        "name": "Wärmepumpenmodus Warmwasser",
+        "state": { "standard": "Standard", "ecological": "Ökologisch", "heat_pump": "Heizen mit Wärmepumpe", "heat_pump_40": "Heizen mit Wärmepumpe 40", "unknown": "Unbekannt" }
       },
-      "system_pressure": {
-        "name": "Anlagendruck"
+      "energy_consumed_current_month_heating": { "name": "Stromverbrauch Heizen aktueller Monat" },
+      "energy_consumed_current_month_cooling": { "name": "Stromverbrauch Kühlen aktueller Monat" },
+      "energy_consumed_current_month_dhw": { "name": "Stromverbrauch Warmwasser aktueller Monat" },
+      "energy_consumed_current_month_total": { "name": "Stromverbrauch Gesamt aktueller Monat" },
+      "energy_consumed_current_year_heating": { "name": "Stromverbrauch Heizen aktuelles Jahr" },
+      "energy_consumed_current_year_cooling": { "name": "Stromverbrauch Kühlen aktuelles Jahr" },
+      "energy_consumed_current_year_dhw": { "name": "Stromverbrauch Warmwasser aktuelles Jahr" },
+      "energy_consumed_current_year_total": { "name": "Stromverbrauch Gesamt aktuelles Jahr" },
+      "energy_produced_current_month_heating": { "name": "Erzeugte Energie Heizen aktueller Monat" },
+      "energy_produced_current_month_cooling": { "name": "Erzeugte Energie Kühlen aktueller Monat" },
+      "energy_produced_current_month_dhw": { "name": "Erzeugte Energie Warmwasser aktueller Monat" },
+      "energy_produced_current_month_total": { "name": "Erzeugte Energie Gesamt aktueller Monat" },
+      "energy_produced_current_year_heating": { "name": "Erzeugte Energie Heizen aktuelles Jahr" },
+      "energy_produced_current_year_cooling": { "name": "Erzeugte Energie Kühlen aktuelles Jahr" },
+      "energy_produced_current_year_dhw": { "name": "Erzeugte Energie Warmwasser aktuelles Jahr" },
+      "energy_produced_current_year_total": { "name": "Erzeugte Energie Gesamt aktuelles Jahr" },
+      "performance_factor_current_month_heating": { "name": "Arbeitszahl Heizen aktueller Monat" },
+      "performance_factor_current_month_cooling": { "name": "Arbeitszahl Kühlen aktueller Monat" },
+      "performance_factor_current_month_dhw": { "name": "Arbeitszahl Warmwasser aktueller Monat" },
+      "performance_factor_current_month_total": { "name": "Arbeitszahl Gesamt aktueller Monat" },
+      "performance_factor_current_year_heating": { "name": "Arbeitszahl Heizen aktuelles Jahr" },
+      "performance_factor_current_year_cooling": { "name": "Arbeitszahl Kühlen aktuelles Jahr" },
+      "performance_factor_current_year_dhw": { "name": "Arbeitszahl Warmwasser aktuelles Jahr" },
+      "performance_factor_current_year_total": { "name": "Arbeitszahl Gesamt aktuelles Jahr" },
+      "time_program_zone": { "name": "Zeitprogramm Heizzone" },
+      "time_program_dhw": { "name": "Zeitprogramm Warmwasser" },
+      "time_program_buffer": { "name": "Zeitprogramm Pufferspeicher" },
+      "zone_mode": {
+        "name": "Zonenbetriebsart",
+        "state": {
+          "off": "Aus",
+          "manual": "Handbetrieb",
+          "time_program": "Zeitprogramm",
+          "unknown": "Unbekannt"
+        }
       },
-      "dhw_temperature": {
-        "name": "Warmwassertemperatur"
+      "plant_mode": {
+        "name": "Anlagenbetriebsart",
+        "state": {
+          "summer": "Sommer (nur Warmwasser)",
+          "winter": "Winter (Heizen und Warmwasser)",
+          "heating_only": "Nur Heizung",
+          "cooling": "Kühlen",
+          "off": "Aus",
+          "unknown": "Unbekannt"
+        }
+      },
+      "dhw_mode": {
+        "name": "Warmwasser-Betriebsart",
+        "state": {
+          "disabled": "Deaktiviert",
+          "time_based": "Zeitbasiert",
+          "continuous": "Ständiger Betrieb",
+          "unknown": "Unbekannt"
+        }
       }
+    },
+    "binary_sensor": {
+      "heating_active": { "name": "Heizbetrieb aktiv" },
+      "cooling_active": { "name": "Kühlbetrieb aktiv" },
+      "heat_pump_on": { "name": "Heizkreispumpe läuft" },
+      "dhw_enabled": { "name": "Warmwasser aktiviert" }
+      ,"automatic_thermoregulation": { "name": "Automatische Thermoregulierung" }
+      ,"zone_pilot_on": { "name": "Zonen-Zeitprogramm aktiv" }
+      ,"holiday_active": { "name": "Urlaubsmodus" }
+      ,"quiet_mode": { "name": "Leiser Betrieb" }
+      ,"dhw_boost": { "name": "Warmwasser-Schnellladung" }
+      ,"resistor_on": { "name": "Elektrischer Heizstab aktiv" }
+      ,"heating_auto_function": { "name": "Heizungs-Automatikfunktion" }
+      ,"summer_winter_automatic": { "name": "Sommer/Winter-Automatik" }
+      ,"legionella_protection": { "name": "Legionellenschutz" }
+      ,"buffer_charging": { "name": "Pufferladung aktiviert" }
+      ,"internet_time": { "name": "Internetzeit aktiviert" }
+      ,"internet_weather": { "name": "Internetwetter aktiviert" }
     }
   }
 }
