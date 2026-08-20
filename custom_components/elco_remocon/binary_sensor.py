@@ -33,27 +33,30 @@ class ElcoBinarySensorDescription(BinarySensorEntityDescription):
 
 BINARY_SENSORS: tuple[ElcoBinarySensorDescription, ...] = (
     ElcoBinarySensorDescription(
-        key="heating_active",
-        translation_key="heating_active",
-        device_class=BinarySensorDeviceClass.HEAT,
-        value_fn=lambda d: d.heating_active,
-    ),
-    ElcoBinarySensorDescription(
-        key="cooling_active",
-        translation_key="cooling_active",
-        device_class=BinarySensorDeviceClass.COLD,
-        value_fn=lambda d: d.cooling_active,
-    ),
-    ElcoBinarySensorDescription(
-        key="heat_pump_on",
-        translation_key="heat_pump_on",
-        device_class=BinarySensorDeviceClass.RUNNING,
-        value_fn=lambda d: d.heat_pump_on,
-    ),
-    ElcoBinarySensorDescription(
         key="dhw_enabled",
         translation_key="dhw_enabled",
         value_fn=lambda d: d.dhw_enabled,
+    ),
+    ElcoBinarySensorDescription(
+        key="holiday",
+        translation_key="holiday",
+        value_fn=lambda d: d.holiday,
+    ),
+    ElcoBinarySensorDescription(
+        key="gateway_online",
+        translation_key="gateway_online",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        value_fn=lambda d: d.gateway_online,
+    ),
+    ElcoBinarySensorDescription(
+        key="quiet_mode_active",
+        translation_key="quiet_mode_active",
+        value_fn=lambda d: d.quiet_mode_active,
+    ),
+    ElcoBinarySensorDescription(
+        key="automatic_thermoregulation",
+        translation_key="automatic_thermoregulation",
+        value_fn=lambda d: d.automatic_thermoregulation,
     ),
 )
 
@@ -90,12 +93,7 @@ class ElcoBinarySensor(CoordinatorEntity[ElcoRemoconCoordinator], BinarySensorEn
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{gw_id}_{description.key}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, gw_id)},
-            "name": "Remocon-Net Heat Pump",
-            "manufacturer": "Elco",
-            "model": "Aerotop SPK",
-        }
+        self._attr_device_info = coordinator.device_info
 
     @property
     def is_on(self) -> bool | None:

@@ -26,17 +26,70 @@
       "desired_temperature": {
         "name": "Solltemperatur"
       },
+      "comfort_temperature": {
+        "name": "Komforttemperatur"
+      },
       "reduced_temperature": {
         "name": "Absenktemperatur"
       },
-      "flow_temperature": {
-        "name": "Vorlauftemperatur"
+      "cooling_comfort_temperature": {
+        "name": "Kühl-Komforttemperatur"
+      },
+      "cooling_reduced_temperature": {
+        "name": "Kühl-Absenktemperatur"
       },
       "system_pressure": {
         "name": "Anlagendruck"
       },
       "dhw_temperature": {
         "name": "Warmwassertemperatur"
+      },
+      "dhw_target_temperature": {
+        "name": "Warmwasser-Solltemperatur"
+      },
+      "flow_setpoint_temperature": {
+        "name": "Vorlauf-Solltemperatur"
+      },
+      "dhw_comfort_temperature": {
+        "name": "Warmwasser Komforttemperatur"
+      },
+      "dhw_reduced_temperature": {
+        "name": "Warmwasser Absenktemperatur"
+      },
+      "zone_deroga": {
+        "name": "Temperaturabweichung"
+      },
+      "plant_mode": {
+        "name": "Anlagenmodus"
+      },
+      "appliance_model": {
+        "name": "Gerätemodell"
+      },
+      "plant_address": {
+        "name": "Anlagenadresse"
+      },
+      "gateway_status": {
+        "name": "Gateway-Status"
+      },
+      "quiet_mode_start": {
+        "name": "Leisemodus Start"
+      },
+      "quiet_mode_end": {
+        "name": "Leisemodus Ende"
+      }
+    },
+    "binary_sensor": {
+      "gateway_online": {
+        "name": "Gateway online"
+      },
+      "quiet_mode_active": {
+        "name": "Leisemodus aktiv"
+      },
+      "automatic_thermoregulation": {
+        "name": "Automatische Thermoregelung"
+      },
+      "zone_pilot_on": {
+        "name": "Zonen-Pilot aktiv"
       }
     }
   }

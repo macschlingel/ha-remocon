@@ -26,17 +26,70 @@
       "desired_temperature": {
         "name": "Desired Temperature"
       },
+      "comfort_temperature": {
+        "name": "Comfort Temperature"
+      },
       "reduced_temperature": {
         "name": "Reduced Temperature"
       },
-      "flow_temperature": {
-        "name": "Flow Temperature"
+      "cooling_comfort_temperature": {
+        "name": "Cooling Comfort Temperature"
+      },
+      "cooling_reduced_temperature": {
+        "name": "Cooling Reduced Temperature"
       },
       "system_pressure": {
         "name": "System Pressure"
       },
       "dhw_temperature": {
         "name": "DHW Temperature"
+      },
+      "dhw_target_temperature": {
+        "name": "DHW Target Temperature"
+      },
+      "flow_setpoint_temperature": {
+        "name": "Flow Setpoint Temperature"
+      },
+      "dhw_comfort_temperature": {
+        "name": "DHW Comfort Temperature"
+      },
+      "dhw_reduced_temperature": {
+        "name": "DHW Reduced Temperature"
+      },
+      "zone_deroga": {
+        "name": "Temperature Override"
+      },
+      "plant_mode": {
+        "name": "Plant Mode"
+      },
+      "appliance_model": {
+        "name": "Appliance Model"
+      },
+      "plant_address": {
+        "name": "Plant Address"
+      },
+      "gateway_status": {
+        "name": "Gateway Status"
+      },
+      "quiet_mode_start": {
+        "name": "Quiet Mode Start"
+      },
+      "quiet_mode_end": {
+        "name": "Quiet Mode End"
+      }
+    },
+    "binary_sensor": {
+      "gateway_online": {
+        "name": "Gateway Online"
+      },
+      "quiet_mode_active": {
+        "name": "Quiet Mode Active"
+      },
+      "automatic_thermoregulation": {
+        "name": "Automatic Thermoregulation"
+      },
+      "zone_pilot_on": {
+        "name": "Zone Pilot On"
       }
     }
   }

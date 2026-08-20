@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import logging
-
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .api import RemoconClient
-from .const import CONF_GATEWAY_ID, CONF_ZONE, DOMAIN
+from .const import DOMAIN
 from .coordinator import ElcoRemoconCoordinator
-
-_LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
     Platform.CLIMATE,

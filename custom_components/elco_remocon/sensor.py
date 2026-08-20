@@ -57,6 +57,14 @@ SENSORS: tuple[ElcoSensorDescription, ...] = (
         value_fn=lambda d: d.desired_temp if d.desired_temp > 0 else None,
     ),
     ElcoSensorDescription(
+        key="comfort_temp",
+        translation_key="comfort_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda d: d.comfort_temp if d.comfort_temp > 0 else None,
+    ),
+    ElcoSensorDescription(
         key="reduced_temp",
         translation_key="reduced_temperature",
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -65,13 +73,20 @@ SENSORS: tuple[ElcoSensorDescription, ...] = (
         value_fn=lambda d: d.reduced_temp if d.reduced_temp > 0 else None,
     ),
     ElcoSensorDescription(
-        key="flow_temp",
-        translation_key="flow_temperature",
+        key="cooling_comfort_temp",
+        translation_key="cooling_comfort_temperature",
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        value_fn=lambda d: d.flow_temperature,
-        exists_fn=lambda d: d.flow_temperature is not None,
+        value_fn=lambda d: d.cooling_comfort_temp if d.cooling_comfort_temp > 0 else None,
+    ),
+    ElcoSensorDescription(
+        key="cooling_reduced_temp",
+        translation_key="cooling_reduced_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda d: d.cooling_reduced_temp if d.cooling_reduced_temp > 0 else None,
     ),
     ElcoSensorDescription(
         key="system_pressure",
@@ -92,6 +107,71 @@ SENSORS: tuple[ElcoSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         value_fn=lambda d: d.dhw_temp if d.dhw_temp > 0 else None,
         exists_fn=lambda d: d.dhw_enabled,
+    ),
+    ElcoSensorDescription(
+        key="dhw_target_temp",
+        translation_key="dhw_target_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda d: d.dhw_target_temp if d.dhw_enabled else None,
+        exists_fn=lambda d: d.dhw_enabled,
+    ),
+    ElcoSensorDescription(
+        key="flow_setpoint_temp",
+        translation_key="flow_setpoint_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda d: d.flow_setpoint_temperature,
+        exists_fn=lambda d: d.flow_setpoint_temperature is not None,
+    ),
+    ElcoSensorDescription(
+        key="dhw_comfort_temp",
+        translation_key="dhw_comfort_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda d: d.dhw_comfort_temp if d.dhw_enabled else None,
+        exists_fn=lambda d: d.dhw_enabled,
+    ),
+    ElcoSensorDescription(
+        key="dhw_reduced_temp",
+        translation_key="dhw_reduced_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        value_fn=lambda d: d.dhw_reduced_temp if d.dhw_enabled else None,
+        exists_fn=lambda d: d.dhw_enabled,
+    ),
+    ElcoSensorDescription(
+        key="zone_deroga",
+        translation_key="zone_deroga",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.zone_deroga,
+    ),
+    ElcoSensorDescription(
+        key="plant_mode",
+        translation_key="plant_mode",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.plant_mode_text,
+    ),
+    ElcoSensorDescription(
+        key="quiet_mode_start",
+        translation_key="quiet_mode_start",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.quiet_mode_start,
+        exists_fn=lambda d: d.quiet_mode_start is not None,
+    ),
+    ElcoSensorDescription(
+        key="quiet_mode_end",
+        translation_key="quiet_mode_end",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.quiet_mode_end,
+        exists_fn=lambda d: d.quiet_mode_end is not None,
     ),
 )
 
@@ -128,12 +208,7 @@ class ElcoSensor(CoordinatorEntity[ElcoRemoconCoordinator], SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{gw_id}_{description.key}"
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, gw_id)},
-            "name": "Remocon-Net Heat Pump",
-            "manufacturer": "Elco",
-            "model": "Aerotop SPK",
-        }
+        self._attr_device_info = coordinator.device_info
 
     @property
     def native_value(self) -> StateType:
