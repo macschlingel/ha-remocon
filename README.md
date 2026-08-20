@@ -1,140 +1,91 @@
 # ha-remocon
 
-**Unofficial Home Assistant integration for Elco heat pumps via the Remocon-Net cloud service.**
+Unofficial Home Assistant integration for ELCO heat pumps connected through the
+Remocon-Net cloud service.
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz/)
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=macschlingel&repository=ha-remocon&category=integration)
+> This community project is not endorsed by ELCO or the Ariston Group.
 
-Control and monitor your Elco heat pump (e.g. Aerotop SPK) through the Remocon-Net cloud API — directly in Home Assistant, no MQTT or AppDaemon needed.
+## Current scope
 
-> **Disclaimer:** This is an unofficial community project. It is not endorsed by or affiliated with Elco or the Ariston Thermo Group.
+Version 0.3.1 exposes broad read-only monitoring plus one explicitly verified
+write control: the DHW time-program comfort temperature. The control is limited
+to whole degrees between 35 and 65 °C and confirms the result with an uncached
+read after every write. All other write endpoints remain disabled.
 
-## Features
+The integration polls the live Remocon-Net status every two minutes and publishes:
 
-- **Climate entity** — Set target temperature, switch operation mode (Auto / Heat / Off), presets (Comfort / Reduced)
-- **Sensors** — Outside temperature, flow temperature, target temperature, system pressure
-- **Binary sensors** — Heating active, cooling active, heat pump running
-- **Config flow** — Easy setup directly in the Home Assistant UI
-- **CLI tool** — Standalone `remocon.py` for testing and debugging from the terminal
+- room temperature, when a room sensor is present;
+- outside, target, comfort, reduced and flow temperatures;
+- domestic-hot-water temperature and setpoints;
+- heating-circuit pressure and heating-zone operating mode;
+- heating, cooling, heat-pump and DHW status.
+- current-month and current-year consumed and produced energy;
+- calculated performance factors where both energy values are available;
+- selected advanced settings and diagnostic values;
+- normalized weekly plans for zone, DHW and buffer programs.
 
-## Requirements
+To limit cloud traffic, energy and time programs are refreshed at most every 30
+minutes and advanced settings at most every 60 minutes.
 
-- Elco heat pump with a Remocon-Net gateway (connected to the internet)
-- Remocon-Net account ([remocon-net.remotethermo.com](https://www.remocon-net.remotethermo.com))
-- Home Assistant >= 2024.1.0
-- [HACS](https://hacs.xyz/) installed
+An expired cloud session is renewed automatically once. Authentication failures
+are handed to Home Assistant so that its normal reauthentication flow can take
+over.
 
 ## Installation
 
-### Via HACS (recommended)
+### HACS custom repository
 
-1. Open HACS in Home Assistant
-2. **≡ Menu** → **Custom Repositories**
-3. Add:
-   - **URL:** `https://github.com/macschlingel/ha-remocon`
-   - **Category:** Integration
-4. Search for **"Remocon-Net"** in HACS and install
-5. Restart Home Assistant
+1. Add this repository to HACS as an integration custom repository.
+2. Install **Remocon-Net (unofficial)**.
+3. Restart Home Assistant.
+4. Open **Settings > Devices & services > Add integration** and search for
+   **Remocon-Net**.
 
 ### Manual
 
-```bash
-cd /path/to/homeassistant/config/custom_components/
-git clone https://github.com/macschlingel/ha-remocon.git elco_remocon_temp
-cp -r elco_remocon_temp/custom_components/elco_remocon ./
-rm -rf elco_remocon_temp
-```
-
-Restart Home Assistant.
+Copy `custom_components/elco_remocon` into the `custom_components` directory of
+your Home Assistant configuration and restart Home Assistant.
 
 ## Configuration
 
-1. Go to **Settings → Devices & Services → Add Integration**
-2. Search for **"Remocon-Net"**
-3. Enter your credentials:
-   - **Email:** Your Remocon-Net login email
-   - **Password:** Your Remocon-Net login password
-   - **Gateway ID:** Your system's gateway ID (see below)
-   - **Zone:** Heating zone (default: 1)
+The config flow asks for:
 
-### Finding your Gateway ID
+- the Remocon-Net account email and password;
+- the gateway ID shown in the Remocon-Net plant URL;
+- the heating-zone number (normally `1`).
 
-1. Log in at [remocon-net.remotethermo.com](https://www.remocon-net.remotethermo.com)
-2. The gateway ID is shown in the URL, e.g. `A1B2C3D4E5F6` in:
-   ```
-   https://www.remocon-net.remotethermo.com/R2/Plant/Index/A1B2C3D4E5F6
-   ```
+Credentials are stored in the Home Assistant config entry. Response bodies,
+credentials and cookies are never written to integration logs.
 
 ## Entities
 
-After setup, the following entities are created:
+| Entity suffix | Type | Description |
+| --- | --- | --- |
+| `room_temp` | Sensor | Room temperature, if available |
+| `outside_temp` | Sensor | Outside temperature |
+| `desired_temp` | Sensor | Current target temperature |
+| `comfort_temp` | Sensor | Comfort setpoint |
+| `reduced_temp` | Sensor | Reduced setpoint |
+| `flow_temp` | Sensor | Heating flow temperature |
+| `system_pressure` | Sensor | Heating-circuit pressure |
+| `dhw_temp` | Sensor | Domestic-hot-water temperature |
+| `dhw_comfort_temp` | Sensor | DHW comfort setpoint |
+| `dhw_reduced_temp` | Sensor | DHW reduced setpoint |
+| `zone_mode` | Sensor | Heating-zone operating mode |
+| `heating_active` | Binary sensor | Heating active |
+| `cooling_active` | Binary sensor | Cooling active |
+| `heat_pump_on` | Binary sensor | Heat pump running |
+| `dhw_enabled` | Binary sensor | Domestic hot water enabled |
 
-| Entity | Type | Description |
-|--------|------|-------------|
-| `climate.remocon_net_heat_pump` | Climate | Temperature control, mode, presets |
-| `sensor.outside_temperature` | Sensor | Outside temperature |
-| `sensor.desired_temperature` | Sensor | Current target temperature |
-| `sensor.reduced_temperature` | Sensor | Reduced setpoint temperature |
-| `sensor.flow_temperature` | Sensor | Flow temperature |
-| `sensor.system_pressure` | Sensor | System pressure (bar) |
-| `binary_sensor.heating_active` | Binary | Heating is active |
-| `binary_sensor.cooling_active` | Binary | Cooling is active |
-| `binary_sensor.heat_pump_on` | Binary | Heat pump is running |
+Optional values are only created when the cloud reports them during initial
+setup. A missing measurement is represented as unavailable, not as a false zero.
 
-### Climate entity
+## Limitations
 
-The climate entity supports:
-
-- **HVAC modes:** `Heat` (Comfort), `Auto` (time program), `Off` (frost protection)
-- **Presets:** `Comfort`, `Reduced`
-- **Temperature:** Adjustable within the range configured on the heat pump
-
-## CLI Tool
-
-A standalone CLI tool is included for testing and debugging:
-
-```bash
-pip install -r requirements.txt
-
-# Create config
-cp config.example.json config.json
-# Edit config.json with your email, password and gateway ID
-
-# Check status
-python3 remocon.py --config-file config.json status
-
-# Set temperature
-python3 remocon.py --config-file config.json set-temp --comfort 22.0
-
-# Change mode
-python3 remocon.py --config-file config.json set-mode comfort
-
-# Raw API response (debug)
-python3 remocon.py --config-file config.json raw-get
-
-# JSON output (for scripting)
-python3 remocon.py --config-file config.json status --json
-```
-
-## Known limitations
-
-- **Cloud-dependent:** Control goes through the Remocon-Net cloud. No control possible during internet outages.
-- **Polling:** Data is fetched every 2 minutes (no real-time streaming).
-- **No room sensor:** If no room thermostat is connected, `current_temperature` shows the target value.
-- **DHW read-only:** Domestic hot water entities are displayed, but DHW control is not yet available through the HA entity (works via CLI).
-
-## Technical details
-
-The integration uses the same API as the Elco Remocon-Net web app:
-
-- **Login:** Cookie-based authentication via `/R2/Account/Login`
-- **Data:** R2 Web API (`/R2/PlantHomeBsb/GetData/`) + v2 REST API (`/api/v2/remote/dataItems/`)
-- **Control:** v2 REST API (`/api/v2/remote/bsbZones/`, `/api/v2/remote/bsbPlantData/`)
-- **Platform:** remotethermo.com (Ariston Thermo Group)
-
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
+- The integration depends on the Remocon-Net cloud and does not provide local
+  control.
+- Cloud API endpoints are unofficial and may change without notice.
+- Write access is limited to the verified DHW comfort-temperature control.
 
 ## License
 

@@ -2,3 +2,9 @@ config.json
 venv/
 __pycache__/
 FORUM_POST.md
+.pytest_cache/
+*.py[cod]
+*.har
+*.zip
+.idea/
+.vscode/

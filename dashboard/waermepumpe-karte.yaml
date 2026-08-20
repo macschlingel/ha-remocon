@@ -1,0 +1,152 @@
+type: vertical-stack
+cards:
+  - type: heading
+    heading: Wärmepumpe
+    icon: mdi:heat-pump
+
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: gauge
+        entity: sensor.remocon_net_heat_pump_raumtemperatur
+        name: Raum
+        min: 10
+        max: 30
+        needle: true
+        severity:
+          green: 19
+          yellow: 23
+          red: 26
+      - type: gauge
+        entity: sensor.remocon_net_heat_pump_warmwassertemperatur
+        name: Warmwasser
+        min: 30
+        max: 65
+        needle: true
+        severity:
+          green: 45
+          yellow: 55
+          red: 62
+
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: tile
+        entity: sensor.remocon_net_heat_pump_anlagenbetriebsart
+        name: Anlagenbetrieb
+        icon: mdi:heat-pump-outline
+      - type: tile
+        entity: sensor.remocon_net_heat_pump_zonenbetriebsart
+        name: Zonenbetrieb
+        icon: mdi:home-thermometer-outline
+      - type: tile
+        entity: binary_sensor.remocon_net_heat_pump_heizkreispumpe_lauft
+        name: Heizkreispumpe
+        icon: mdi:pump
+      - type: tile
+        entity: binary_sensor.remocon_net_heat_pump_kuhlbetrieb_aktiv
+        name: Kühlbetrieb
+        icon: mdi:snowflake
+
+  - type: history-graph
+    title: Temperaturen – letzte 24 Stunden
+    hours_to_show: 24
+    entities:
+      - entity: sensor.remocon_net_heat_pump_raumtemperatur
+        name: Raum
+      - entity: sensor.remocon_net_heat_pump_aussentemperatur
+        name: Außen
+      - entity: sensor.remocon_net_heat_pump_vorlauf_solltemperatur
+        name: Vorlauf Soll
+      - entity: sensor.remocon_net_heat_pump_warmwassertemperatur
+        name: Warmwasser
+
+  - type: heading
+    heading: Warmwasser
+    icon: mdi:water-thermometer
+
+  - type: entities
+    show_header_toggle: false
+    entities:
+      - entity: number.hwr_remocon_net_heat_pump_warmwasser_komforttemperatur_einstellen
+        name: Komforttemperatur einstellen
+      - entity: sensor.remocon_net_heat_pump_warmwasser_solltemperatur
+        name: Aktuelle Solltemperatur
+      - entity: sensor.remocon_net_heat_pump_warmwasser_betriebsart
+        name: Betriebsart
+      - entity: binary_sensor.remocon_net_heat_pump_warmwasser_aktiviert
+        name: Aktiviert
+      - entity: binary_sensor.hwr_remocon_net_heat_pump_warmwasser_schnellladung
+        name: Schnellladung
+
+  - type: heading
+    heading: Energie – aktueller Monat
+    icon: mdi:lightning-bolt
+
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: tile
+        entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_heizen_aktueller_monat
+        name: Heizen
+        icon: mdi:radiator
+      - type: tile
+        entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_kuhlen_aktueller_monat
+        name: Kühlen
+        icon: mdi:snowflake
+      - type: tile
+        entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_warmwasser_aktueller_monat
+        name: Warmwasser
+        icon: mdi:water-boiler
+      - type: tile
+        entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_gesamt_aktueller_monat
+        name: Gesamt
+        icon: mdi:meter-electric-outline
+
+  - type: heading
+    heading: Energie – aktuelles Jahr
+    icon: mdi:chart-bar
+
+  - type: entities
+    show_header_toggle: false
+    entities:
+      - entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_heizen_aktuelles_jahr
+        name: Strom Heizen
+      - entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_kuhlen_aktuelles_jahr
+        name: Strom Kühlen
+      - entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_warmwasser_aktuelles_jahr
+        name: Strom Warmwasser
+      - type: divider
+      - entity: sensor.hwr_remocon_net_heat_pump_stromverbrauch_gesamt_aktuelles_jahr
+        name: Strom Gesamt
+      - entity: sensor.hwr_remocon_net_heat_pump_erzeugte_energie_gesamt_aktuelles_jahr
+        name: Erzeugte Energie Gesamt
+      - entity: sensor.hwr_remocon_net_heat_pump_arbeitszahl_gesamt_aktuelles_jahr
+        name: Arbeitszahl Gesamt
+
+  - type: heading
+    heading: Weitere interessante Werte
+    icon: mdi:information-outline
+
+  - type: entities
+    show_header_toggle: false
+    entities:
+      - entity: sensor.remocon_net_heat_pump_anlagendruck
+        name: Anlagendruck
+      - entity: sensor.remocon_net_heat_pump_vorlauf_solltemperatur
+        name: Vorlauf-Solltemperatur
+      - entity: sensor.hwr_remocon_net_heat_pump_kuhlung_komforttemperatur
+        name: Kühlung Komfort
+      - entity: sensor.hwr_remocon_net_heat_pump_sommer_winter_grenztemperatur
+        name: Sommer/Winter-Grenze
+      - entity: binary_sensor.hwr_remocon_net_heat_pump_leiser_betrieb
+        name: Leiser Betrieb
+      - entity: binary_sensor.hwr_remocon_net_heat_pump_elektrischer_heizstab_aktiv
+        name: Elektrischer Heizstab
+      - entity: binary_sensor.hwr_remocon_net_heat_pump_legionellenschutz
+        name: Legionellenschutz
+      - entity: sensor.hwr_remocon_net_heat_pump_wlan_signalpegel
+        name: WLAN-Signalpegel

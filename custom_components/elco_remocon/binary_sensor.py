@@ -11,6 +11,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -55,6 +56,79 @@ BINARY_SENSORS: tuple[ElcoBinarySensorDescription, ...] = (
         translation_key="dhw_enabled",
         value_fn=lambda d: d.dhw_enabled,
     ),
+    ElcoBinarySensorDescription(
+        key="automatic_thermoregulation",
+        translation_key="automatic_thermoregulation",
+        value_fn=lambda d: d.automatic_thermoregulation,
+    ),
+    ElcoBinarySensorDescription(
+        key="zone_pilot_on",
+        translation_key="zone_pilot_on",
+        value_fn=lambda d: d.zone_pilot_on,
+    ),
+    ElcoBinarySensorDescription(
+        key="holiday_active",
+        translation_key="holiday_active",
+        value_fn=lambda d: d.holiday_active,
+    ),
+    ElcoBinarySensorDescription(
+        key="quiet_mode",
+        translation_key="quiet_mode",
+        value_fn=lambda d: d.quiet_mode,
+    ),
+    ElcoBinarySensorDescription(
+        key="dhw_boost",
+        translation_key="dhw_boost",
+        value_fn=lambda d: d.dhw_boost,
+    ),
+    ElcoBinarySensorDescription(
+        key="resistor_on",
+        translation_key="resistor_on",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        value_fn=lambda d: d.resistor_on,
+    ),
+    ElcoBinarySensorDescription(
+        key="heating_auto_function",
+        translation_key="heating_auto_function",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: bool(d.settings.get("U6_3_3")),
+        exists_fn=lambda d: "U6_3_3" in d.settings,
+    ),
+    ElcoBinarySensorDescription(
+        key="summer_winter_automatic",
+        translation_key="summer_winter_automatic",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: bool(d.settings.get("U6_3_5_0_0")),
+        exists_fn=lambda d: "U6_3_5_0_0" in d.settings,
+    ),
+    ElcoBinarySensorDescription(
+        key="legionella_protection",
+        translation_key="legionella_protection",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: bool(d.settings.get("U6_9_5_0")),
+        exists_fn=lambda d: "U6_9_5_0" in d.settings,
+    ),
+    ElcoBinarySensorDescription(
+        key="buffer_charging",
+        translation_key="buffer_charging",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: bool(d.settings.get("U6_10_0")),
+        exists_fn=lambda d: "U6_10_0" in d.settings,
+    ),
+    ElcoBinarySensorDescription(
+        key="internet_time",
+        translation_key="internet_time",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: bool(d.settings.get("U6_16_6")),
+        exists_fn=lambda d: "U6_16_6" in d.settings,
+    ),
+    ElcoBinarySensorDescription(
+        key="internet_weather",
+        translation_key="internet_weather",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: bool(d.settings.get("U6_16_7")),
+        exists_fn=lambda d: "U6_16_7" in d.settings,
+    ),
 )
 
 
@@ -94,7 +168,7 @@ class ElcoBinarySensor(CoordinatorEntity[ElcoRemoconCoordinator], BinarySensorEn
             "identifiers": {(DOMAIN, gw_id)},
             "name": "Remocon-Net Heat Pump",
             "manufacturer": "Elco",
-            "model": "Aerotop SPK",
+            "model": "Aerotop Split 12.2 M-RX",
         }
 
     @property

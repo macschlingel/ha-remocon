@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Remocon-Net (unofficial)",
-        "description": "Unofficial integration — connect your Elco heat pump via the Remocon-Net Cloud.",
+        "description": "Connects your ELCO heat pump through the Remocon-Net cloud.",
         "data": {
           "email": "Email",
           "password": "Password",
@@ -13,31 +13,128 @@
       }
     },
     "error": {
-      "auth": "Login failed. Email or password incorrect.",
-      "connection": "Connection to the Remocon-Net Cloud failed.",
-      "no_data": "No data received from the system. Is the Gateway ID correct?"
+      "auth": "Login failed. Check the email address and password.",
+      "connection": "Could not connect to the Remocon-Net cloud.",
+      "no_data": "No plant data received. Check the gateway ID and zone."
     }
   },
   "entity": {
+    "number": {
+      "dhw_comfort_temperature": { "name": "Set DHW comfort temperature" }
+    },
     "sensor": {
-      "outside_temperature": {
-        "name": "Outside Temperature"
+      "room_temperature": { "name": "Room temperature" },
+      "outside_temperature": { "name": "Outside temperature" },
+      "desired_temperature": { "name": "Current target temperature" },
+      "comfort_temperature": { "name": "Comfort temperature" },
+      "reduced_temperature": { "name": "Reduced temperature" },
+      "cooling_comfort_temperature": { "name": "Cooling comfort temperature" },
+      "cooling_reduced_temperature": { "name": "Cooling reduced temperature" },
+      "flow_temperature": { "name": "Flow target temperature" },
+      "system_pressure": { "name": "System pressure" },
+      "dhw_temperature": { "name": "DHW temperature" },
+      "dhw_target_temperature": { "name": "DHW target temperature" },
+      "dhw_comfort_temperature": { "name": "DHW comfort temperature" },
+      "dhw_reduced_temperature": { "name": "DHW reduced temperature" },
+      "summer_winter_threshold": { "name": "Summer/winter threshold" },
+      "summer_winter_delay": { "name": "Summer/winter delay" },
+      "legionella_interval": { "name": "Legionella protection interval" },
+      "buffer_heating_comfort_temperature": { "name": "Buffer heating comfort temperature" },
+      "buffer_heating_reduced_temperature": { "name": "Buffer heating reduced temperature" },
+      "buffer_cooling_comfort_temperature": { "name": "Buffer cooling comfort temperature" },
+      "buffer_cooling_reduced_temperature": { "name": "Buffer cooling reduced temperature" },
+      "pv_dhw_temperature_increase": { "name": "PV DHW temperature increase" },
+      "wifi_signal_level": { "name": "Wi-Fi signal level" },
+      "buffer_setpoint_mode": {
+        "name": "Buffer setpoint mode",
+        "state": { "fixed": "Fixed", "variable": "Variable", "unknown": "Unknown" }
       },
-      "desired_temperature": {
-        "name": "Desired Temperature"
+      "external_heat_source_heating_mode": {
+        "name": "External heat source heating",
+        "state": { "heat_integral_backup": "Heat integral and fault backup", "backup_only": "Fault backup only", "unknown": "Unknown" }
       },
-      "reduced_temperature": {
-        "name": "Reduced Temperature"
+      "external_heat_source_dhw_mode": {
+        "name": "External heat source DHW",
+        "state": { "heat_integral_backup": "Heat integral and fault backup", "backup_only": "Fault backup only", "unknown": "Unknown" }
       },
-      "flow_temperature": {
-        "name": "Flow Temperature"
+      "dhw_heat_pump_mode": {
+        "name": "DHW heat-pump mode",
+        "state": { "standard": "Standard", "ecological": "Ecological", "heat_pump": "Heat with heat pump", "heat_pump_40": "Heat with heat pump 40", "unknown": "Unknown" }
       },
-      "system_pressure": {
-        "name": "System Pressure"
+      "energy_consumed_current_month_heating": { "name": "Heating electricity current month" },
+      "energy_consumed_current_month_cooling": { "name": "Cooling electricity current month" },
+      "energy_consumed_current_month_dhw": { "name": "DHW electricity current month" },
+      "energy_consumed_current_month_total": { "name": "Total electricity current month" },
+      "energy_consumed_current_year_heating": { "name": "Heating electricity current year" },
+      "energy_consumed_current_year_cooling": { "name": "Cooling electricity current year" },
+      "energy_consumed_current_year_dhw": { "name": "DHW electricity current year" },
+      "energy_consumed_current_year_total": { "name": "Total electricity current year" },
+      "energy_produced_current_month_heating": { "name": "Produced heating energy current month" },
+      "energy_produced_current_month_cooling": { "name": "Produced cooling energy current month" },
+      "energy_produced_current_month_dhw": { "name": "Produced DHW energy current month" },
+      "energy_produced_current_month_total": { "name": "Total produced energy current month" },
+      "energy_produced_current_year_heating": { "name": "Produced heating energy current year" },
+      "energy_produced_current_year_cooling": { "name": "Produced cooling energy current year" },
+      "energy_produced_current_year_dhw": { "name": "Produced DHW energy current year" },
+      "energy_produced_current_year_total": { "name": "Total produced energy current year" },
+      "performance_factor_current_month_heating": { "name": "Heating performance factor current month" },
+      "performance_factor_current_month_cooling": { "name": "Cooling performance factor current month" },
+      "performance_factor_current_month_dhw": { "name": "DHW performance factor current month" },
+      "performance_factor_current_month_total": { "name": "Total performance factor current month" },
+      "performance_factor_current_year_heating": { "name": "Heating performance factor current year" },
+      "performance_factor_current_year_cooling": { "name": "Cooling performance factor current year" },
+      "performance_factor_current_year_dhw": { "name": "DHW performance factor current year" },
+      "performance_factor_current_year_total": { "name": "Total performance factor current year" },
+      "time_program_zone": { "name": "Heating zone time program" },
+      "time_program_dhw": { "name": "DHW time program" },
+      "time_program_buffer": { "name": "Buffer time program" },
+      "zone_mode": {
+        "name": "Zone operating mode",
+        "state": {
+          "off": "Off",
+          "manual": "Manual",
+          "time_program": "Time program",
+          "unknown": "Unknown"
+        }
       },
-      "dhw_temperature": {
-        "name": "DHW Temperature"
+      "plant_mode": {
+        "name": "Plant operating mode",
+        "state": {
+          "summer": "Summer (DHW only)",
+          "winter": "Winter (heating and DHW)",
+          "heating_only": "Heating only",
+          "cooling": "Cooling",
+          "off": "Off",
+          "unknown": "Unknown"
+        }
+      },
+      "dhw_mode": {
+        "name": "DHW operating mode",
+        "state": {
+          "disabled": "Disabled",
+          "time_based": "Time based",
+          "continuous": "Continuous",
+          "unknown": "Unknown"
+        }
       }
+    },
+    "binary_sensor": {
+      "heating_active": { "name": "Heating active" },
+      "cooling_active": { "name": "Cooling active" },
+      "heat_pump_on": { "name": "Heating circuit pump running" },
+      "dhw_enabled": { "name": "DHW enabled" }
+      ,"automatic_thermoregulation": { "name": "Automatic thermoregulation" }
+      ,"zone_pilot_on": { "name": "Zone time program active" }
+      ,"holiday_active": { "name": "Holiday mode" }
+      ,"quiet_mode": { "name": "Quiet mode" }
+      ,"dhw_boost": { "name": "DHW boost" }
+      ,"resistor_on": { "name": "Electric heater active" }
+      ,"heating_auto_function": { "name": "Heating automatic function" }
+      ,"summer_winter_automatic": { "name": "Summer/winter automatic" }
+      ,"legionella_protection": { "name": "Legionella protection" }
+      ,"buffer_charging": { "name": "Buffer charging enabled" }
+      ,"internet_time": { "name": "Internet time enabled" }
+      ,"internet_weather": { "name": "Internet weather enabled" }
     }
   }
 }
