@@ -128,7 +128,7 @@ python3 remocon.py --config-file config.json status --json
 The integration uses the same API as the Elco Remocon-Net web app:
 
 - **Login:** Cookie-based authentication via `/R2/Account/Login`
-- **Data:** R2 Web API (`/R2/PlantHomeBsb/GetData/`) + v2 REST API (`/api/v2/remote/dataItems/`)
+- **Data:** R2 Web API (`/R2/PlantHome/GetData/`, falling back to `/R2/PlantHomeBsb/GetData/` for BSB-bus systems such as Aerotop/Aquatop, which 500 on the non-BSB path) + v2 REST API (`/api/v2/remote/dataItems/`)
 - **Control:** v2 REST API (`/api/v2/remote/bsbZones/`, `/api/v2/remote/bsbPlantData/`)
 - **Platform:** remotethermo.com (Ariston Thermo Group)
 

@@ -101,6 +101,7 @@ class RemoconClient:
         self._gateway_id = gateway_id
         self._zone = zone
         self._session: Optional[requests.Session] = None
+        self._planthome_prefix: Optional[str] = None
 
     def login(self) -> None:
         """Authenticate and store session cookie."""
@@ -162,14 +163,39 @@ class RemoconClient:
             raise RemoconDataError("Could not parse API response") from err
 
     def _get_raw(self) -> dict:
-        path = f"/R2/PlantHome/GetData/{self._gateway_id}?umsys=si"
+        # Remocon-Net splits systems onto two endpoint families depending on whether
+        # they're BSB-bus (e.g. Aerotop/Aquatop heat pumps) or not (e.g. older
+        # boilers), and each 500s for the other family's plants. Probe the
+        # historically-default non-BSB path first so existing non-BSB setups see no
+        # behavior change, fall back to the BSB path on failure, and cache whichever
+        # one worked so later calls skip straight to it.
         payload = {
             "useCache": True,
             "zone": int(self._zone),
             "filter": {"notEssentials": False, "plant": True, "zone": True, "dhw": True},
             "features": FEATURES_PAYLOAD,
         }
-        data = self._request("POST", path, json=payload)
+        prefixes = [self._planthome_prefix] if self._planthome_prefix else \
+            ["/R2/PlantHome", "/R2/PlantHomeBsb"]
+        first_err: Optional[RemoconConnectionError] = None
+        data = None
+        for prefix in prefixes:
+            path = f"{prefix}/GetData/{self._gateway_id}?umsys=si"
+            try:
+                data = self._request("POST", path, json=payload)
+            except RemoconConnectionError as err:
+                if first_err is None:
+                    first_err = err
+                if self._planthome_prefix == prefix:
+                    # The cached prefix started failing; drop it so the next call
+                    # re-probes instead of staying pinned to a bad endpoint.
+                    self._planthome_prefix = None
+                continue
+            self._planthome_prefix = prefix
+            break
+        else:
+            raise first_err
+
         if not data:
             raise RemoconDataError("Empty data received from API")
         if isinstance(data, dict) and not data.get("ok", True):
