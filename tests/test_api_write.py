@@ -150,7 +150,7 @@ def test_quiet_mode_uses_flat_prev_value_and_v2_set():
         return {"success": True}
 
     with patch.object(client, "_get_flat_raw", return_value=ITEMS), patch.object(
-        client, "_confirm_write"
+        client, "_confirm_v2_write"
     ), patch.object(client, "_request", side_effect=fake_request) as request:
         client.set_quiet_mode(True)
 

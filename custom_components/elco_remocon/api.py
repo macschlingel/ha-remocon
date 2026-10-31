@@ -747,10 +747,15 @@ class RemoconClient:
         """Confirm a v2 write with an uncached v2 re-read."""
         import time
 
+        _LOGGER.debug("Confirming v2 write %s=%s (zone %s)", item_id, expected_value, zone)
         for attempt in range(max_retries):
             try:
                 current = self._get_v2_data_items([item_id], zone)
                 actual = (current.get(item_id) or {}).get("value")
+                _LOGGER.debug(
+                    "V2 confirmation attempt %d: %s present=%s actual=%s expected=%s",
+                    attempt + 1, item_id, item_id in current, actual, expected_value,
+                )
                 try:
                     if float(str(actual)) == float(str(expected_value)):
                         _LOGGER.debug("Write confirmed: %s = %s", item_id, actual)
@@ -1054,7 +1059,7 @@ class RemoconClient:
             "value": value,
             "zone": 0,
         }])
-        self._confirm_write("IsQuite", value)
+        self._confirm_v2_write("IsQuite", value, 0)
 
     def _confirm_write(self, item_id: str, expected_value: Any, max_retries: int = 3) -> None:
         """Confirm a write by re-reading the item with cache disabled.
@@ -1095,6 +1100,10 @@ class RemoconClient:
                     for item in items_list:
                         if isinstance(item, dict) and item.get("id") == item_id:
                             actual = item.get("value")
+                            _LOGGER.debug(
+                                "Flat confirmation attempt %d: %s actual=%s expected=%s",
+                                attempt + 1, item_id, actual, expected_value,
+                            )
                             # Compare loosely (int vs float, str vs int)
                             try:
                                 if float(str(actual)) == float(str(expected_value)):
