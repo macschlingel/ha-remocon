@@ -12,6 +12,7 @@ Ariston/Elco remotethermo.com API endpoints.
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -49,6 +50,59 @@ DHW_MODES = {
     1: "ON",
 }
 
+# Flat-R2 (newer gateways, e.g. Aerotop MONO / GALEVO family) mode maps.
+FLAT_ZONE_MODES = {
+    0: "off",
+    2: "manual",
+    3: "time_program",
+}
+FLAT_ZONE_MODE_MAP = {v: k for k, v in FLAT_ZONE_MODES.items()}
+
+FLAT_DHW_MODES = {
+    0: "disabled",
+    1: "timed",
+    2: "continuous",
+}
+FLAT_DHW_MODE_MAP = {v: k for k, v in FLAT_DHW_MODES.items()}
+
+PLANT_MODES = {
+    0: "summer",
+    1: "winter",
+    2: "heating",
+    3: "cooling",
+    5: "off",
+}
+PLANT_MODE_MAP = {v: k for k, v in PLANT_MODES.items()}
+
+FLAT_RELEVANT_ITEM_IDS = {
+    "ZoneComfortTemp", "ZoneEconomyTemp", "ZoneDesiredTemp", "ZoneMeasuredTemp",
+    "ZoneMode", "ZoneHeatRequest", "OutsideTemp", "DhwStorageTemperature",
+    "DhwTimeProgComfortTemp", "DhwTimeProgEconomyTemp", "DhwMode",
+    "IsHeatingPumpOn", "HeatingCircuitPressure", "ChFlowSetpointTemp",
+    "IsDhwBoost", "IsQuite", "PlantMode",
+}
+
+DHW_WRITE_REQUIRED_ITEM_IDS = (
+    "DhwTimeProgComfortTemp",
+    "DhwTimeProgEconomyTemp",
+    "DhwMode",
+    "DhwStorageTemperature",
+)
+DHW_WRITE_OPTIONAL_ITEM_IDS = (
+    "IsDhwBoost",
+)
+DHW_WRITE_ITEM_IDS = DHW_WRITE_REQUIRED_ITEM_IDS + DHW_WRITE_OPTIONAL_ITEM_IDS
+
+# AJAX headers the R2 web app sends with every postJson/getJson call.
+AJAX_HEADERS = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Ajax-Request": "json",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+# Advanced-settings group written together when toggling quiet mode.
+QUIET_MODE_ITEM_IDS = ("IsQuite", "QuietModeStart", "QuietModeEnd")
+
 # Features payload used for v2 API calls — matches what the web UI sends.
 # This may need adjustment depending on your specific heat pump model.
 FEATURES_PAYLOAD = {
@@ -70,6 +124,28 @@ FEATURES_PAYLOAD = {
     "hasSlpAloneOnBus": False, "isSlpCascade": False,
     "hasZeroColdWaterProg": False, "weatherProvider": 0,
     "hasDhwTimeProgTemperatures": 2, "isGSWHCommercialAloneOnBus": False,
+}
+
+# Feature profile observed for Aerotop Split (flat R2) gateways. Used only by
+# the flat R2 fallback, whose response depends on the installation features.
+FLAT_FEATURES_PAYLOAD = {
+    **FEATURES_PAYLOAD,
+    "solar": False, "convBoiler": False, "commBoiler": False, "hpSys": True,
+    "hybridSys": False, "cascadeSys": False, "dhwProgSupported": True,
+    "virtualZones": False, "hasVmc": False, "extendedTimeProg": False,
+    "hasBoiler": False, "pilotSupported": True, "isVmcR2": False,
+    "isEvo2": False, "dhwHidden": False, "dhwBoilerPresent": True,
+    "dhwModeChangeable": True, "hvInputOff": False, "autoThermoReg": True,
+    "hasMetering": True, "hasFireplace": False, "hasSlp": False,
+    "hasEm20": True, "hasEm30": False, "systemServices": None,
+    "hasTwoCoolingTemp": True, "bmsActive": False, "hpCascadeSys": False,
+    "hpCascadeSysPcm5": False, "hpCascadeConfig": -1,
+    "bufferTimeProgAvailable": True, "distinctHeatCoolSetpoints": True,
+    "hasZoneNames": True, "hydraulicScheme": 5, "preHeatingSupported": False,
+    "hasGahp": False, "zigbeeActive": False, "hasSlpAloneOnBus": False,
+    "isSlpCascade": False, "hasZeroColdWaterProg": False,
+    "weatherProvider": 1, "hasDhwTimeProgTemperatures": 1,
+    "isGSWHCommercialAloneOnBus": False,
 }
 
 # ============================================================================
@@ -118,10 +194,15 @@ class HeatingData:
     system_pressure: Optional[float] = None
     flow_temperature: Optional[float] = None
     zone_id: str = "1"
+    # Flat-R2 only (None on legacy gateways -> omitted from output)
+    protocol: Optional[str] = None  # "legacy" or "flat"
+    plant_mode: Optional[str] = None
+    quiet_mode: Optional[bool] = None
+    dhw_boost: Optional[bool] = None
     timestamp: datetime = field(default_factory=datetime.now)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "current_temperature": self.current_temperature,
             "desired_temperature": self.desired_temperature,
             "comfort_temperature": self.comfort_temperature,
@@ -140,6 +221,14 @@ class HeatingData:
             "zone_id": self.zone_id,
             "timestamp": self.timestamp.isoformat(),
         }
+        # Flat-R2 extras: only present when the gateway uses the flat format so
+        # legacy JSON consumers see no change.
+        if self.protocol == "flat":
+            result["protocol"] = self.protocol
+            result["plant_mode"] = self.plant_mode
+            result["quiet_mode"] = self.quiet_mode
+            result["dhw_boost"] = self.dhw_boost
+        return result
 
 
 # ============================================================================
@@ -234,6 +323,15 @@ class RemoconClient:
     def __init__(self, config: Config):
         self.config = config
         self.session: Optional[requests.Session] = None
+        # Detected protocol: None = not yet probed, "legacy" (plantData/zoneData
+        # via PlantHome/PlantHomeBsb) or "flat" (data.items via PlantHome).
+        self._protocol: Optional[str] = None
+        self._planthome_variant: Optional[str] = None  # planthome_si | bsb_si | bsb_browser
+
+    @property
+    def is_flat_api(self) -> bool:
+        """Whether this gateway uses the flat R2 data format."""
+        return self._protocol == "flat"
 
     def login(self) -> None:
         """Authenticate via the R2 web login (cookie-based session)."""
@@ -288,16 +386,154 @@ class RemoconClient:
 
     # ---- Read operations ----
 
-    def get_plant_data(self) -> dict:
-        """Fetch plant + zone data via R2 API."""
-        path = f"/R2/PlantHomeBsb/GetData/{self.config.gateway_id}"
-        payload = {
+    def _request_variant(self, variant: str) -> Any:
+        """Read one PlantHome endpoint variant using its matching request body."""
+        prefix = "/R2/PlantHome" if variant == "planthome_si" else "/R2/PlantHomeBsb"
+        path = f"{prefix}/GetData/{self.config.gateway_id}"
+        payload: dict[str, Any] = {
             "useCache": True,
             "zone": int(self.config.zone_id),
-            "filter": {"progIds": None, "plant": True, "zone": True},
         }
-        data = self._request("POST", path, json=payload)
-        return data.get("data", data)
+        if variant == "bsb_browser":
+            # Historically the CLI used this browser-style BSB request; keep it
+            # byte-identical so existing BSB gateways behave exactly as before.
+            payload["filter"] = {"progIds": None, "plant": True, "zone": True}
+        else:
+            path += "?umsys=si"
+            payload["filter"] = {
+                "notEssentials": False, "plant": True, "zone": True, "dhw": True,
+            }
+            payload["features"] = FEATURES_PAYLOAD
+        return self._request("POST", path, json=payload)
+
+    def _get_raw(self) -> Any:
+        """Fetch raw plant data, detecting the gateway's protocol on first call.
+
+        Returns the legacy plantData/zoneData dict, or a dict of flat items
+        keyed by item id (self._protocol == "flat").
+        """
+        if self._protocol == "flat":
+            return self._get_flat_raw()
+
+        variants = ["planthome_si", "bsb_si", "bsb_browser"]
+        if self._planthome_variant:
+            variants.remove(self._planthome_variant)
+            variants.insert(0, self._planthome_variant)
+        skip_si_variants = False
+        for variant in variants:
+            if skip_si_variants and variant != "bsb_browser":
+                continue
+            try:
+                data = self._request_variant(variant)
+            except NetworkError:
+                # Cached variant started failing: drop it so the next call
+                # re-probes instead of staying pinned to a bad endpoint.
+                if self._planthome_variant == variant:
+                    self._planthome_variant = None
+                continue
+            has_flat_items = (
+                isinstance(data, dict)
+                and isinstance(data.get("data"), dict)
+                and isinstance(data["data"].get("items"), list)
+            )
+            if has_flat_items:
+                self._planthome_variant = None
+                return self._get_flat_raw()
+            if not isinstance(data, dict) or not data.get("ok", True):
+                skip_si_variants = True
+                continue
+            legacy = data.get("data", data)
+            if isinstance(legacy, dict) and (
+                "plantData" in legacy or "zoneData" in legacy
+            ):
+                self._planthome_variant = variant
+                self._protocol = "legacy"
+                return legacy
+            skip_si_variants = True
+
+        # The current R2 endpoint omits ?umsys=si and returns data.items.
+        self._planthome_variant = None
+        return self._get_flat_raw()
+
+    @staticmethod
+    def _flat_items(items: list) -> dict:
+        mapped = {
+            str(item["id"]): item
+            for item in items
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        if not mapped:
+            raise DataError("Flat R2 response contains no valid data items")
+        return mapped
+
+    def _flat_features(self) -> dict:
+        """Build the gateway-specific feature profile used by flat R2 calls."""
+        return {
+            **FLAT_FEATURES_PAYLOAD,
+            "gatewayId": self.config.gateway_id,
+            "zones": [{
+                "num": int(self.config.zone_id), "name": "Zone", "roomSens": False,
+                "geofenceDeroga": True, "virtInfo": None, "isHidden": False,
+            }],
+        }
+
+    def _get_flat_item_call(self, filter_data: dict, *, use_cache: bool = True) -> dict:
+        """Fetch and index one group of flat R2 data items."""
+        response = self._request(
+            "POST",
+            f"/R2/PlantHome/GetData/{self.config.gateway_id}",
+            json={
+                "useCache": use_cache,
+                "zone": int(self.config.zone_id),
+                "filter": filter_data,
+                "features": self._flat_features(),
+            },
+        )
+        if not isinstance(response, dict) or not response.get("ok", True):
+            message = response.get("message") if isinstance(response, dict) else None
+            raise DataError(message or "Flat R2 request failed")
+        data = response.get("data")
+        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(items, list) or not items:
+            raise DataError("Flat R2 response contains no data items")
+        return self._flat_items(items)
+
+    def _get_flat_raw(self, *, use_cache: bool = True) -> dict:
+        """Fetch the flat R2 data format, caching the protocol after success."""
+        essentials = self._get_flat_item_call(
+            {"notEssentials": False, "plant": True, "zone": True, "dhw": True},
+            use_cache=use_cache,
+        )
+        has_relevant_value = any(
+            item_id in essentials
+            and essentials[item_id].get("value") not in (None, "")
+            for item_id in FLAT_RELEVANT_ITEM_IDS
+        )
+        if not has_relevant_value:
+            raise DataError(
+                "Flat R2 response contains no items used by this integration"
+            )
+
+        self._planthome_variant = None
+        self._protocol = "flat"
+        items = dict(essentials)
+        try:
+            items.update(self._get_flat_item_call({
+                "dhw": False,
+                "notEssentials": True,
+                "plant": False,
+                "progId": 9,
+                "zone": False,
+            }, use_cache=use_cache))
+        except (NetworkError, DataError):
+            # Status-only items are useful but optional; an outage here must not
+            # prevent status reads.
+            pass
+        return items
+
+    def get_plant_data(self) -> dict:
+        """Fetch plant + zone data via R2 API (protocol auto-detected)."""
+        return self._get_raw()
 
     def get_system_items(self, item_ids: list[dict]) -> dict:
         """Fetch specific data items via the v2 API."""
@@ -314,9 +550,103 @@ class RemoconClient:
             result[item["id"]] = item.get("value")
         return result
 
+    @staticmethod
+    def _flat_number(items: dict, key: str, default: float = 0.0, attr: str = "value") -> float:
+        item = items.get(key, {})
+        v = item.get(attr) if isinstance(item, dict) else None
+        if v is None or v == "":
+            return default
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _flat_bool(items: dict, key: str) -> bool:
+        item = items.get(key, {})
+        v = item.get("value") if isinstance(item, dict) else None
+        if isinstance(v, str):
+            return v.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(v)
+
+    def _get_full_data_flat(self, items: dict) -> HeatingData:
+        """Map flat R2 items into HeatingData (flat gateways)."""
+        def value(key: str, attr: str = "value"):
+            item = items.get(key, {})
+            return item.get(attr) if isinstance(item, dict) else None
+
+        try:
+            mode_val = int(value("ZoneMode"))
+        except (TypeError, ValueError):
+            mode_val = 1
+        mode_item = items.get("ZoneMode", {})
+        opts = mode_item.get("optTexts", []) if isinstance(mode_item, dict) else []
+        mode_texts = [str(x) for x in opts] if isinstance(opts, list) else []
+        mode_str = (
+            mode_texts[mode_val]
+            if isinstance(mode_val, int) and 0 <= mode_val < len(mode_texts)
+            else FLAT_ZONE_MODES.get(mode_val, f"Mode {mode_val}")
+        )
+
+        request = self._flat_bool(items, "ZoneHeatRequest")
+        request_value = value("ZoneHeatRequest")
+        pump_value = value("IsHeatingPumpOn")
+        try:
+            plant_mode_val = int(value("PlantMode"))
+        except (TypeError, ValueError):
+            plant_mode_val = None
+        if request_value is None or plant_mode_val is None:
+            heating_active = False
+            cooling_active = False
+        else:
+            heating_active = request and plant_mode_val != 3
+            cooling_active = request and plant_mode_val == 3
+
+        dhw_mode_val = int(self._flat_number(items, "DhwMode"))
+        dhw_mode_str = FLAT_DHW_MODES.get(dhw_mode_val, "Unknown")
+
+        return HeatingData(
+            current_temperature=self._flat_number(items, "ZoneMeasuredTemp"),
+            desired_temperature=self._flat_number(items, "ZoneDesiredTemp"),
+            reduced_temperature=self._flat_number(items, "ZoneEconomyTemp"),
+            comfort_temperature=self._flat_number(items, "ZoneComfortTemp"),
+            outside_temperature=self._flat_number(items, "OutsideTemp"),
+            operation_mode=mode_str,
+            operation_mode_value=mode_val,
+            heating_active=heating_active,
+            cooling_active=cooling_active,
+            heat_or_cool_request=request,
+            dhw_temperature=self._flat_number(items, "DhwStorageTemperature"),
+            dhw_comfort_temp=_float_or_none(value("DhwTimeProgComfortTemp")),
+            dhw_reduced_temp=_float_or_none(value("DhwTimeProgEconomyTemp")),
+            dhw_mode=dhw_mode_str,
+            dhw_enabled=dhw_mode_val > 0,
+            boiler_status="Unknown",
+            heat_pump_on=(
+                self._flat_bool(items, "IsHeatingPumpOn")
+                if pump_value is not None else False
+            ),
+            system_pressure=(
+                self._flat_number(items, "HeatingCircuitPressure")
+                if value("HeatingCircuitPressure") is not None else None
+            ),
+            flow_temperature=(
+                self._flat_number(items, "ChFlowSetpointTemp")
+                if value("ChFlowSetpointTemp") is not None else None
+            ),
+            zone_id=self.config.zone_id,
+            protocol="flat",
+            plant_mode=PLANT_MODES.get(plant_mode_val) if plant_mode_val is not None else None,
+            quiet_mode=self._flat_bool(items, "IsQuite") if "IsQuite" in items else None,
+            dhw_boost=self._flat_bool(items, "IsDhwBoost") if "IsDhwBoost" in items else None,
+            timestamp=datetime.now(),
+        )
+
     def get_full_data(self) -> HeatingData:
         """Retrieve all available data and return a HeatingData object."""
         raw = self.get_plant_data()
+        if self._protocol == "flat":
+            return self._get_full_data_flat(raw)
         plant = raw.get("plantData", {})
         zone = raw.get("zoneData", {})
 
@@ -371,6 +701,7 @@ class RemoconClient:
             system_pressure=float(pressure) if pressure is not None else None,
             flow_temperature=float(flow_temp) if flow_temp is not None else None,
             zone_id=self.config.zone_id,
+            protocol="legacy",
             timestamp=datetime.now(),
         )
 
@@ -383,8 +714,20 @@ class RemoconClient:
         is_cooling: bool = False,
     ) -> bool:
         """Set comfort and/or reduced temperature for a zone."""
-        # First, read current values
+        # Flat-R2 gateways write via the v2 dataItems set endpoint.
         raw = self.get_plant_data()
+        if self.is_flat_api:
+            if is_cooling:
+                raise DataError("Cooling setpoint writes are not supported on flat R2 gateways")
+            if comfort is not None:
+                self._set_flat_data_item(
+                    "ZoneComfortTemp", comfort, int(self.config.zone_id),
+                    temperature_name="Zone comfort temperature",
+                )
+            if reduced is not None:
+                self._set_zone_reduced_temperature(reduced)
+            return True
+        # First, read current values
         zone = raw.get("zoneData", {})
 
         if is_cooling:
@@ -408,14 +751,70 @@ class RemoconClient:
         self._request("POST", path, json=payload)
         return True
 
+    def _set_zone_reduced_temperature(self, value: float) -> None:
+        zone = int(self.config.zone_id)
+        current = self._get_v2_data_items(["ZoneComfortTemp", "ZoneEconomyTemp"], zone)
+        reduced_item = current.get("ZoneEconomyTemp")
+        if not isinstance(reduced_item, dict):
+            raise DataError("ZoneEconomyTemp is not available on this gateway")
+        value = self._validate_temperature(
+            value,
+            float(reduced_item.get("min") or 5),
+            float(reduced_item.get("max") or 25),
+            float(reduced_item.get("step") or 0.5),
+            "Zone reduced temperature",
+        )
+        comfort = (current.get("ZoneComfortTemp") or {}).get("value")
+        if comfort is not None:
+            try:
+                if value > float(comfort):
+                    raise DataError(f"Reduced ({value}) must not exceed comfort ({comfort})")
+            except (TypeError, ValueError):
+                pass
+        self._set_v2_data_items([{
+            "id": "ZoneEconomyTemp", "prevValue": reduced_item.get("value"),
+            "value": value, "zone": zone,
+        }])
+        self._confirm_v2_write("ZoneEconomyTemp", value, zone)
+
     def set_zone_mode(self, mode: str, is_cooling: bool = False) -> bool:
-        """Set the zone operation mode. Accepts: protection, automatic, reduction, comfort."""
+        """Set the zone operation mode.
+
+        Legacy names: protection, automatic, reduction, comfort.
+        Flat-R2 names: off, manual, time_program.
+        """
         mode_lower = mode.lower()
+        if mode_lower in FLAT_ZONE_MODE_MAP:
+            new_mode = FLAT_ZONE_MODE_MAP[mode_lower]
+            if not self._protocol:
+                self.get_plant_data()
+            if self.is_flat_api:
+                if is_cooling:
+                    raise DataError("Cooling mode writes are not supported on flat R2 gateways")
+                if new_mode not in (0, 2, 3):
+                    raise DataError(
+                        f"Invalid mode '{mode}' for flat R2. Valid: off, manual, time_program"
+                    )
+                self._set_flat_data_item("ZoneMode", new_mode, int(self.config.zone_id))
+                return True
+            raise DataError(
+                f"Mode '{mode}' is only supported on flat R2 gateways. "
+                f"Valid modes here: {', '.join(ZONE_MODE_MAP.keys())}"
+            )
         if mode_lower not in ZONE_MODE_MAP:
             raise DataError(
-                f"Invalid mode '{mode}'. Valid modes: {', '.join(ZONE_MODE_MAP.keys())}"
+                f"Invalid mode '{mode}'. Valid modes: "
+                f"{', '.join(ZONE_MODE_MAP.keys())} (legacy), "
+                f"{', '.join(FLAT_ZONE_MODE_MAP.keys())} (flat R2)"
             )
         new_mode = ZONE_MODE_MAP[mode_lower]
+        if not self._protocol:
+            self.get_plant_data()
+        if self.is_flat_api:
+            raise DataError(
+                f"Mode '{mode}' is a legacy mode. On flat R2 gateways use: "
+                f"{', '.join(FLAT_ZONE_MODE_MAP.keys())}"
+            )
 
         # Read current mode
         raw = self.get_plant_data()
@@ -435,6 +834,38 @@ class RemoconClient:
         reduced: Optional[float] = None,
     ) -> bool:
         """Set domestic hot water comfort/reduced temperature."""
+        if not self._protocol:
+            self.get_plant_data()
+        if self.is_flat_api:
+            if comfort is not None:
+                items = self._get_flat_raw(use_cache=False)
+                item = items.get("DhwTimeProgComfortTemp", {})
+                if not isinstance(item, dict):
+                    raise DataError("DhwTimeProgComfortTemp is not available on this gateway")
+                validated = self._validate_temperature(
+                    comfort,
+                    float(item.get("min") or 35),
+                    float(item.get("max") or 65),
+                    float(item.get("step") or 1),
+                    "DHW comfort temperature",
+                )
+                self._flat_save("PlantDhw", items, "DhwTimeProgComfortTemp", int(validated))
+                self._confirm_write("DhwTimeProgComfortTemp", int(validated))
+            if reduced is not None:
+                items = self._get_flat_raw(use_cache=False)
+                item = items.get("DhwTimeProgEconomyTemp", {})
+                if not isinstance(item, dict):
+                    raise DataError("DhwTimeProgEconomyTemp is not available on this gateway")
+                validated = self._validate_temperature(
+                    reduced,
+                    float(item.get("min") or 30),
+                    float(item.get("max") or 55),
+                    float(item.get("step") or 1),
+                    "DHW reduced temperature",
+                )
+                self._flat_save("PlantDhw", items, "DhwTimeProgEconomyTemp", int(validated))
+                self._confirm_write("DhwTimeProgEconomyTemp", int(validated))
+            return True
         raw = self.get_plant_data()
         plant = raw.get("plantData", {})
 
@@ -453,11 +884,31 @@ class RemoconClient:
         return True
 
     def set_dhw_mode(self, mode: str) -> bool:
-        """Set DHW mode: 'on' or 'off'."""
+        """Set DHW mode: 'on'/'off' (legacy) or 'disabled'/'timed'/'continuous' (flat R2)."""
         mode_lower = mode.lower()
-        if mode_lower not in ("on", "off"):
+        if not self._protocol:
+            self.get_plant_data()
+        if self.is_flat_api:
+            flat_mode = {"off": "disabled", "on": "timed"}.get(mode_lower, mode_lower)
+            if flat_mode not in FLAT_DHW_MODE_MAP:
+                raise DataError(
+                    f"Invalid DHW mode '{mode}' for flat R2. "
+                    f"Valid: on/off or {', '.join(FLAT_DHW_MODE_MAP.keys())}"
+                )
+            new_val = FLAT_DHW_MODE_MAP[flat_mode]
+            items = self._get_flat_raw(use_cache=False)
+            self._flat_save("PlantDhw", items, "DhwMode", new_val)
+            self._confirm_write("DhwMode", new_val)
+            return True
+        # Legacy gateways keep the historical on/off mapping (1/0).
+        if mode_lower == "continuous":
+            raise DataError(
+                "DHW mode 'continuous' is only supported on flat R2 gateways. "
+                "Valid modes here: on, off"
+            )
+        if mode_lower not in ("on", "off", "disabled", "timed"):
             raise DataError("DHW mode must be 'on' or 'off'")
-        new_val = 1 if mode_lower == "on" else 0
+        new_val = 1 if mode_lower in ("on", "timed") else 0
 
         path = f"/api/v2/remote/bsbPlantData/{self.config.gateway_id}/dhwMode"
         payload = {"new": new_val}
@@ -466,6 +917,11 @@ class RemoconClient:
 
     def set_data_item(self, item_id: str, value: Any, zone: int = 0) -> bool:
         """Set a generic data item via the v2 API."""
+        if not self._protocol:
+            self.get_plant_data()
+        if self.is_flat_api:
+            self._set_flat_data_item(item_id, value, zone)
+            return True
         # Read current value first
         current = self.get_system_items([{"id": item_id, "zn": zone}])
         old_val = current.get(item_id, 0)
@@ -476,6 +932,224 @@ class RemoconClient:
             "features": FEATURES_PAYLOAD,
         }
         self._request("POST", path, json=payload)
+        return True
+
+    def _v2_features(self) -> dict:
+        zone = int(self.config.zone_id)
+        return {
+            **FEATURES_PAYLOAD,
+            "gatewayId": self.config.gateway_id,
+            "zones": [{
+                "num": zone, "name": "", "roomSens": False,
+                "geofenceDeroga": False, "virtInfo": None, "isHidden": False,
+            }],
+        }
+
+    def _get_v2_data_items(self, item_ids: list[str], zone: int) -> dict:
+        path = f"/api/v2/remote/dataItems/{self.config.gateway_id}/get?umsys=si"
+        response = self._request("POST", path, json={
+            "useCache": False,
+            "items": [{"id": item_id, "zn": zone} for item_id in item_ids],
+            "features": self._v2_features(),
+            "culture": "de",
+        })
+        if not isinstance(response, dict):
+            raise DataError("Invalid v2 dataItems response")
+        return {
+            str(item["id"]): item
+            for item in response.get("items", [])
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+
+    def _set_v2_data_items(self, writes: list[dict]) -> None:
+        path = f"/api/v2/remote/dataItems/{self.config.gateway_id}/set?umsys=si"
+        response = self._request("POST", path, json={
+            "items": writes,
+            "features": self._v2_features(),
+        })
+        if isinstance(response, dict) and response.get("success") is False:
+            raise DataError("Remocon-Net rejected the write request")
+
+    def _validate_temperature(
+        self, value: float, min_temp: float, max_temp: float, step: float, name: str
+    ) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise DataError(f"{name} must be a number, got {type(value).__name__}")
+        value = float(value)
+        if not math.isfinite(value) or step <= 0:
+            raise DataError(f"{name} must be finite and use a positive step")
+        if value < min_temp or value > max_temp:
+            raise DataError(f"{name} {value} out of range [{min_temp}, {max_temp}]")
+        steps = round((value - min_temp) / step)
+        if abs(value - (min_temp + steps * step)) > 1e-9:
+            raise DataError(f"{name} must use increments of {step}")
+        return round(value, 2)
+
+    def _set_flat_data_item(
+        self, item_id: str, value: Any, zone: int, *, temperature_name: Optional[str] = None
+    ) -> None:
+        current = self._get_v2_data_items([item_id], zone)
+        item = current.get(item_id)
+        if not isinstance(item, dict):
+            raise DataError(f"Item {item_id} is not available on this gateway")
+        if temperature_name is not None:
+            value = self._validate_temperature(
+                value, float(item.get("min") or 0), float(item.get("max") or 99),
+                float(item.get("step") or 0.5), temperature_name,
+            )
+        self._set_v2_data_items([{
+            "id": item_id, "prevValue": item.get("value"),
+            "value": value, "zone": zone,
+        }])
+        self._confirm_v2_write(item_id, value, zone)
+
+    def _confirm_v2_write(
+        self, item_id: str, expected_value: Any, zone: int, max_retries: int = 3
+    ) -> None:
+        for attempt in range(max_retries):
+            try:
+                item = self._get_v2_data_items([item_id], zone).get(item_id, {})
+                actual = item.get("value") if isinstance(item, dict) else None
+                try:
+                    if float(str(actual)) == float(str(expected_value)):
+                        return
+                except (TypeError, ValueError):
+                    if str(actual) == str(expected_value):
+                        return
+            except (NetworkError, DataError) as exc:
+                print(f"Warning: write confirmation read failed: {exc}", file=sys.stderr)
+            if attempt + 1 < max_retries:
+                time.sleep(1)
+        print(f"Warning: could not confirm {item_id}={expected_value}", file=sys.stderr)
+
+    def _build_dhw_save_payload(self, items: dict, item_id: str, new_value: Any) -> dict:
+        missing = [key for key in DHW_WRITE_REQUIRED_ITEM_IDS if key not in items]
+        if missing:
+            raise DataError(f"DHW write prerequisites are missing: {', '.join(missing)}")
+        if item_id not in items:
+            raise DataError(f"DHW item is not available on this gateway: {item_id}")
+        write_ids = [key for key in DHW_WRITE_ITEM_IDS if key in items]
+        prev_items = []
+        request_items = []
+        for current_id in write_ids:
+            source = items[current_id]
+            prev_items.append({
+                "id": current_id, "gatewayId": self.config.gateway_id,
+                "value": source.get("value"), "zone": source.get("zone", 0),
+                "kind": source.get("kind"), "unit": source.get("unit"),
+                "min": source.get("min"), "max": source.get("max"),
+                "step": source.get("step"), "decimals": source.get("decimals"),
+                "options": source.get("options") or [],
+                "optTexts": source.get("optTexts") or [],
+                "readOnly": bool(source.get("readOnly")),
+                "error": bool(source.get("error")), "invalid": bool(source.get("invalid")),
+                "expiresOn": source.get("expiresOn"),
+            })
+            request_items.append({
+                "itemId": current_id,
+                "value": new_value if current_id == item_id else source.get("value"),
+            })
+        return {
+            "requestItems": request_items,
+            "prevDataItems": prev_items,
+            "features": self._flat_features(),
+        }
+
+    def _flat_save(self, section: str, items: dict, item_id: str, value: Any) -> None:
+        if section != "PlantDhw":
+            raise DataError(f"Unsupported flat save section: {section}")
+        payload = self._build_dhw_save_payload(items, item_id, value)
+        response = self._request(
+            "POST", f"/R2/{section}/Save/{self.config.gateway_id}", json=payload
+        )
+        if isinstance(response, dict) and not response.get("ok", True):
+            raise DataError("Remocon-Net rejected the write request")
+
+    def _confirm_write(self, item_id: str, expected_value: Any, max_retries: int = 3) -> None:
+        for attempt in range(max_retries):
+            try:
+                items = self._get_flat_raw(use_cache=False)
+                actual = (items.get(item_id) or {}).get("value")
+                try:
+                    if float(str(actual)) == float(str(expected_value)):
+                        return
+                except (TypeError, ValueError):
+                    if str(actual) == str(expected_value):
+                        return
+            except (NetworkError, DataError) as exc:
+                print(f"Warning: write confirmation read failed: {exc}", file=sys.stderr)
+            if attempt + 1 < max_retries:
+                time.sleep(1)
+        print(f"Warning: could not confirm {item_id}={expected_value}", file=sys.stderr)
+
+    def set_dhw_boost(self, enable: bool) -> bool:
+        if not self._protocol:
+            self.get_plant_data()
+        if not self.is_flat_api:
+            raise DataError("DHW boost is only supported on flat R2 gateways")
+        items = self._get_flat_raw(use_cache=False)
+        value = 1 if enable else 0
+        self._flat_save("PlantDhw", items, "IsDhwBoost", value)
+        self._confirm_write("IsDhwBoost", value)
+        return True
+
+    def set_plant_mode(self, mode: str) -> bool:
+        mode_lower = mode.lower()
+        if mode_lower not in PLANT_MODE_MAP:
+            raise DataError(f"Invalid plant mode. Valid: {', '.join(PLANT_MODE_MAP)}")
+        if not self._protocol:
+            self.get_plant_data()
+        if not self.is_flat_api:
+            raise DataError("Plant mode control is only supported on flat R2 gateways")
+        self._set_flat_data_item("PlantMode", PLANT_MODE_MAP[mode_lower], 0)
+        return True
+
+    def set_quiet_mode(self, enable: bool) -> bool:
+        if not self._protocol:
+            self.get_plant_data()
+        if not self.is_flat_api:
+            raise DataError("Quiet mode is only supported on flat R2 gateways")
+        response = self._request(
+            "POST", f"/R2/PlantAdvancedSettings/Refresh/{self.config.gateway_id}",
+            headers=AJAX_HEADERS, json={"features": self._flat_features()},
+        )
+        data = response.get("data", {}) if isinstance(response, dict) else {}
+        current = {
+            str(item["id"]): item for item in data.get("dataItems", [])
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        missing = [item_id for item_id in QUIET_MODE_ITEM_IDS if item_id not in current]
+        if missing:
+            raise DataError(f"Quiet-mode prerequisites are missing: {', '.join(missing)}")
+        request_items = []
+        prev_items = []
+        for item_id in QUIET_MODE_ITEM_IDS:
+            source = current[item_id]
+            prev_items.append({
+                "gatewayId": self.config.gateway_id, "zone": source.get("zone", 0),
+                "id": item_id, "kind": source.get("kind"),
+                "min": source.get("min"), "max": source.get("max"),
+                "step": source.get("step"), "value": source.get("value"),
+                "decimals": source.get("decimals"),
+                "options": source.get("options") or [],
+                "optTexts": source.get("optTexts") or [],
+                "readOnly": bool(source.get("readOnly")),
+                "error": bool(source.get("error")), "invalid": bool(source.get("invalid")),
+                "expiresOn": source.get("expiresOn"), "unit": source.get("unit"),
+            })
+            request_items.append({
+                "itemId": item_id,
+                "value": (1 if enable else 0) if item_id == "IsQuite" else source.get("value"),
+            })
+        response = self._request(
+            "POST", f"/R2/PlantAdvancedSettings/Save/{self.config.gateway_id}",
+            headers=AJAX_HEADERS,
+            json={"features": self._flat_features(), "requestItems": request_items,
+                  "prevDataItems": prev_items},
+        )
+        if isinstance(response, dict) and not response.get("ok", True):
+            raise DataError("Remocon-Net rejected the quiet-mode write")
+        self._confirm_write("IsQuite", 1 if enable else 0)
         return True
 
 
@@ -596,6 +1270,8 @@ def display_status(data: HeatingData) -> None:
         print(f"  Reduced Set:    {data.dhw_reduced_temp:.1f} °C")
     print(f"  Mode:           {data.dhw_mode}")
     print(f"  Enabled:        {'Yes' if data.dhw_enabled else 'No'}")
+    if data.dhw_boost is not None:
+        print(f"  Boost:          {'On' if data.dhw_boost else 'Off'}")
     print()
 
     print("  System")
@@ -605,6 +1281,10 @@ def display_status(data: HeatingData) -> None:
         print(f"  Pressure:       {data.system_pressure:.1f} bar")
     if data.flow_temperature is not None:
         print(f"  Flow Temp:      {data.flow_temperature:.1f} °C")
+    if data.plant_mode is not None:
+        print(f"  Plant Mode:     {data.plant_mode}")
+    if data.quiet_mode is not None:
+        print(f"  Quiet Mode:     {'On' if data.quiet_mode else 'Off'}")
     print()
 
 
@@ -674,6 +1354,24 @@ def cmd_raw_get(client: RemoconClient, config: Config, args: argparse.Namespace)
     return 0
 
 
+def cmd_set_plant_mode(client: RemoconClient, config: Config, args: argparse.Namespace) -> int:
+    client.set_plant_mode(args.mode)
+    print(f"Plant mode set to: {args.mode}")
+    return 0
+
+
+def cmd_set_quiet_mode(client: RemoconClient, config: Config, args: argparse.Namespace) -> int:
+    client.set_quiet_mode(args.mode == "on")
+    print(f"Quiet mode set to: {args.mode}")
+    return 0
+
+
+def cmd_set_dhw_boost(client: RemoconClient, config: Config, args: argparse.Namespace) -> int:
+    client.set_dhw_boost(args.mode == "on")
+    print(f"DHW boost set to: {args.mode}")
+    return 0
+
+
 # ============================================================================
 # Argument Parser
 # ============================================================================
@@ -702,7 +1400,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # set-mode
     p_mode = sub.add_parser("set-mode", help="Set zone operation mode")
-    p_mode.add_argument("mode", choices=list(ZONE_MODE_MAP.keys()),
+    p_mode.add_argument("mode", choices=[*ZONE_MODE_MAP.keys(), *FLAT_ZONE_MODE_MAP.keys()],
                         help="Operation mode")
     p_mode.add_argument("--cooling", action="store_true", help="Set cooling mode")
     _add_config_args(p_mode)
@@ -714,9 +1412,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_args(p_dhw_temp)
 
     # set-dhw-mode
-    p_dhw_mode = sub.add_parser("set-dhw-mode", help="Set DHW mode (on/off)")
-    p_dhw_mode.add_argument("mode", choices=["on", "off"], help="DHW mode")
+    p_dhw_mode = sub.add_parser("set-dhw-mode", help="Set DHW mode")
+    p_dhw_mode.add_argument(
+        "mode", choices=["on", "off", "disabled", "timed", "continuous"],
+        help="DHW mode (legacy: on/off; flat R2: disabled/timed/continuous)",
+    )
     _add_config_args(p_dhw_mode)
+
+    p_plant = sub.add_parser("set-plant-mode", help="Set flat-R2 plant mode")
+    p_plant.add_argument("mode", choices=list(PLANT_MODE_MAP), help="Plant mode")
+    _add_config_args(p_plant)
+
+    p_quiet = sub.add_parser("set-quiet-mode", help="Set flat-R2 quiet mode")
+    p_quiet.add_argument("mode", choices=["on", "off"], help="Quiet mode")
+    _add_config_args(p_quiet)
+
+    p_boost = sub.add_parser("set-dhw-boost", help="Set flat-R2 DHW boost")
+    p_boost.add_argument("mode", choices=["on", "off"], help="DHW boost")
+    _add_config_args(p_boost)
 
     # raw-get
     p_raw = sub.add_parser("raw-get", help="Fetch raw API response (debug)")
@@ -768,6 +1481,9 @@ def main() -> int:
                 "set-mode": cmd_set_mode,
                 "set-dhw-temp": cmd_set_dhw_temp,
                 "set-dhw-mode": cmd_set_dhw_mode,
+                "set-plant-mode": cmd_set_plant_mode,
+                "set-quiet-mode": cmd_set_quiet_mode,
+                "set-dhw-boost": cmd_set_dhw_boost,
                 "raw-get": cmd_raw_get,
             }[args.command]
             return cmd_func(client, config, args)

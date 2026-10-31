@@ -130,12 +130,21 @@ python3 remocon.py --config-file config.json set-temp --comfort 22.0
 # Change mode
 python3 remocon.py --config-file config.json set-mode comfort
 
+# Flat-R2 controls (the gateway protocol is detected automatically)
+python3 remocon.py --config-file config.json set-mode manual
+python3 remocon.py --config-file config.json set-dhw-mode continuous
+python3 remocon.py --config-file config.json set-plant-mode winter
+python3 remocon.py --config-file config.json set-quiet-mode on
+python3 remocon.py --config-file config.json set-dhw-boost on
+
 # Raw API response (debug)
 python3 remocon.py --config-file config.json raw-get
 
 # JSON output (for scripting)
 python3 remocon.py --config-file config.json status --json
 ```
+
+The CLI keeps the existing commands and legacy API behavior for older gateways. Flat-R2 gateways are detected automatically; their zone modes are `off`, `manual`, or `time_program`, and DHW modes are `disabled`, `timed`, or `continuous` (`on`/`off` remain aliases). `set-plant-mode`, `set-quiet-mode`, and `set-dhw-boost` are available on flat-R2 gateways. Flat-R2 cooling setpoint and cooling zone-mode writes are not yet supported.
 
 ## Known limitations
 
