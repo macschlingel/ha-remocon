@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from math import isfinite
+from typing import Any, Literal, Optional
 from urllib.parse import quote
 
 import requests
@@ -20,6 +22,11 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 BASE_URL = "https://www.remocon-net.remotethermo.com"
+
+# Seconds; connections and existing requests keep the default timeout.
+DEFAULT_REQUEST_TIMEOUT = 15
+BSB_BROWSER_READ_TIMEOUT = 30
+SLOW_REQUEST_THRESHOLD = 10
 
 FEATURES_PAYLOAD = {
     "zones": [{"num": 1, "name": "", "roomSens": False, "geofenceDeroga": False,
@@ -93,6 +100,8 @@ AJAX_HEADERS = {
 # Advanced-settings group written together when toggling quiet mode.
 QUIET_MODE_ITEM_IDS = ("IsQuite", "QuietModeStart", "QuietModeEnd")
 
+_PlantHomeVariant = Literal["planthome_si", "bsb_si", "bsb_browser"]
+
 
 class RemoconApiError(Exception):
     """Base exception for API errors."""
@@ -165,8 +174,9 @@ class RemoconClient:
         self._gateway_id = gateway_id
         self._zone = zone
         self._session: Optional[requests.Session] = None
-        self._planthome_prefix: Optional[str] = None
+        self._planthome_variant: _PlantHomeVariant | None = None
         self._flat_api = False
+        self._last_logged_variant: _PlantHomeVariant | Literal["flat"] | None = None
 
     @property
     def is_flat_api(self) -> bool:
@@ -187,7 +197,7 @@ class RemoconClient:
             "Cookie": "browserUtcOffset=-120",
         }
         try:
-            resp = s.post(url, headers=headers, data=payload, timeout=15)
+            resp = s.post(url, headers=headers, data=payload, timeout=DEFAULT_REQUEST_TIMEOUT)
         except requests.RequestException as err:
             raise RemoconConnectionError(str(err)) from err
 
@@ -210,63 +220,142 @@ class RemoconClient:
             self.login()
         return self._session  # type: ignore[return-value]
 
-    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        api_variant: _PlantHomeVariant | Literal["flat"] | None = None,
+        **kwargs: Any,
+    ) -> Any:
         s = self._get_session()
         url = f"{BASE_URL}{path}"
-        kwargs.setdefault("timeout", 15)
+        timeout = (
+            (DEFAULT_REQUEST_TIMEOUT, BSB_BROWSER_READ_TIMEOUT)
+            if api_variant == "bsb_browser"
+            else DEFAULT_REQUEST_TIMEOUT
+        )
+        kwargs.setdefault("timeout", timeout)
+        started = time.monotonic() if api_variant is not None else None
+        outcome = "failed"
         try:
-            resp = s.request(method, url, **kwargs)
-            if resp.status_code in (401, 403):
-                raise RemoconAuthError("Session expired")
-            resp.raise_for_status()
-        except requests.RequestException as err:
-            err_msg = str(err)
-            if getattr(err, "response", None) is not None:
-                err_msg += f" - Response: {err.response.text}"
-            _LOGGER.error("API Request failed: %s", err_msg)
-            raise RemoconConnectionError(err_msg) from err
-        
-        try:
-            return resp.json()
-        except ValueError as err:
-            _LOGGER.error("Invalid JSON response from API: %s", resp.text)
-            raise RemoconDataError("Could not parse API response") from err
+            try:
+                resp = s.request(method, url, **kwargs)
+                if resp.status_code in (401, 403):
+                    raise RemoconAuthError("Session expired")
+                resp.raise_for_status()
+            except requests.RequestException as err:
+                if isinstance(err, requests.Timeout):
+                    outcome = "timed out"
+                err_msg = str(err)
+                if getattr(err, "response", None) is not None:
+                    err_msg += f" - Response: {err.response.text}"
+                _LOGGER.error("API Request failed: %s", err_msg)
+                raise RemoconConnectionError(err_msg) from err
+
+            try:
+                data = resp.json()
+            except ValueError as err:
+                _LOGGER.error("Invalid JSON response from API: %s", resp.text)
+                raise RemoconDataError("Could not parse API response") from err
+            outcome = (
+                "failed"
+                if isinstance(data, dict) and not data.get("ok", True)
+                else "completed"
+            )
+            return data
+        finally:
+            if api_variant is not None and started is not None:
+                self._log_request_duration(api_variant, time.monotonic() - started, outcome)
+
+    def _log_request_duration(
+        self, variant: _PlantHomeVariant | Literal["flat"], duration: float, outcome: str
+    ) -> None:
+        """Report only the variant, outcome and elapsed request time."""
+        if outcome == "timed out":
+            _LOGGER.info("REMOCON API %s: request timed out after %.1fs", variant, duration)
+            return
+        slow = duration >= SLOW_REQUEST_THRESHOLD
+        log = _LOGGER.info if slow else _LOGGER.debug
+        log(
+            "REMOCON API %s: %s %s in %.1fs",
+            variant, "slow request" if slow else "request", outcome, duration,
+        )
+
+    def _request_planthome_variant(self, variant: _PlantHomeVariant) -> Any:
+        """Read one endpoint using its matching query and request body."""
+        prefix = "/R2/PlantHome" if variant == "planthome_si" else "/R2/PlantHomeBsb"
+        path = f"{prefix}/GetData/{self._gateway_id}"
+        payload: dict[str, Any] = {
+            "useCache": True,
+            "zone": int(self._zone),
+        }
+        if variant == "bsb_browser":
+            payload["filter"] = {"progIds": None, "plant": True, "zone": True}
+        else:
+            path += "?umsys=si"
+            payload["filter"] = {
+                "notEssentials": False, "plant": True, "zone": True, "dhw": True,
+            }
+            payload["features"] = FEATURES_PAYLOAD
+        return self._request("POST", path, api_variant=variant, json=payload)
+
+    def _log_api_variant(self, variant: _PlantHomeVariant | Literal["flat"]) -> None:
+        """Log successful variant changes independently of the request cache."""
+        if variant != self._last_logged_variant:
+            _LOGGER.info("Selected REMOCON API variant: %s", variant)
+            self._last_logged_variant = variant
 
     def _get_raw(self) -> dict:
         if self._flat_api:
             return self._get_flat_raw()
 
-        # Remocon-Net splits systems onto two endpoint families depending on whether
-        # they're BSB-bus (e.g. Aerotop/Aquatop heat pumps) or not (e.g. older
-        # boilers), and each 500s for the other family's plants. Probe the
-        # historically-default non-BSB path first so existing non-BSB setups see no
-        # behavior change, fall back to the BSB path on failure, and cache whichever
-        # one worked so later calls skip straight to it.
-        payload = {
-            "useCache": True,
-            "zone": int(self._zone),
-            "filter": {"notEssentials": False, "plant": True, "zone": True, "dhw": True},
-            "features": FEATURES_PAYLOAD,
-        }
-        if self._planthome_prefix:
-            alternate = (
-                "/R2/PlantHomeBsb"
-                if self._planthome_prefix == "/R2/PlantHome"
-                else "/R2/PlantHome"
-            )
-            prefixes = [self._planthome_prefix, alternate]
-        else:
-            prefixes = ["/R2/PlantHome", "/R2/PlantHomeBsb"]
-        for prefix in prefixes:
-            path = f"{prefix}/GetData/{self._gateway_id}?umsys=si"
-            try:
-                data = self._request("POST", path, json=payload)
-            except RemoconConnectionError:
-                if self._planthome_prefix == prefix:
-                    # The cached prefix started failing; drop it so the next call
-                    # re-probes instead of staying pinned to a bad endpoint.
-                    self._planthome_prefix = None
+        # Endpoint and payload compatibility depends on the gateway/controller.
+        # Keep the existing SI requests first, then try the browser BSB request.
+        # Cache the complete variant because both BSB requests share a prefix.
+        variants: list[_PlantHomeVariant] = ["planthome_si", "bsb_si", "bsb_browser"]
+        if self._planthome_variant:
+            variants.remove(self._planthome_variant)
+            variants.insert(0, self._planthome_variant)
+        skip_si_variants = False
+        for variant in variants:
+            if skip_si_variants and variant != "bsb_browser":
                 continue
+            try:
+                data = self._request_planthome_variant(variant)
+            except RemoconConnectionError as err:
+                if self._planthome_variant == variant:
+                    cause = err.__cause__
+                    if variant == "bsb_browser" and (
+                        isinstance(cause, requests.Timeout)
+                        or (
+                            isinstance(cause, requests.HTTPError)
+                            and cause.response is not None
+                            and 500 <= cause.response.status_code < 600
+                        )
+                    ):
+                        # A known browser endpoint need not be rediscovered after
+                        # a temporary outage. Keep it for the next regular poll.
+                        raise
+                    # Preserve rediscovery for the previously supported variants
+                    # and for other browser endpoint connection errors.
+                    self._planthome_variant = None
+                continue
+            if (
+                variant == "bsb_browser"
+                and self._planthome_variant == "bsb_browser"
+                and isinstance(data, dict)
+                and data.get("ok") is False
+            ):
+                # A rejected update does not invalidate a confirmed protocol.
+                if (
+                    isinstance(data.get("message"), str)
+                    and data["message"].strip().casefold() == "kommunikationsfehler"
+                    and isinstance(data.get("debugMessage"), str)
+                    and data["debugMessage"].strip().casefold().startswith("m2m platform error")
+                ):
+                    raise RemoconConnectionError("REMOCON M2M communication error")
+                raise RemoconDataError("REMOCON API rejected data request")
             has_flat_items = (
                 isinstance(data, dict)
                 and isinstance(data.get("data"), dict)
@@ -276,22 +365,26 @@ class RemoconClient:
                 # Some gateways return flat items with HTTP 200 from the
                 # legacy URL. Continue to the no-umsys fallback so it receives
                 # the required flat feature profile.
-                self._planthome_prefix = None
+                self._planthome_variant = None
                 return self._get_flat_raw()
             if not isinstance(data, dict) or not data.get("ok", True):
-                break
+                # Preserve the old break between SI variants, but still allow
+                # the browser request before falling back to the flat API.
+                skip_si_variants = True
+                continue
             legacy = data.get("data", data)
             if isinstance(legacy, dict) and (
                 "plantData" in legacy or "zoneData" in legacy
             ):
-                self._planthome_prefix = prefix
+                self._planthome_variant = variant
                 self._flat_api = False
+                self._log_api_variant(variant)
                 return legacy
-            break
+            skip_si_variants = True
 
         # The current R2 endpoint omits ?umsys=si and returns data.items.
         # This path is deliberately a read-only compatibility fallback.
-        self._planthome_prefix = None
+        self._planthome_variant = None
         return self._get_flat_raw()
 
     @staticmethod
@@ -321,7 +414,7 @@ class RemoconClient:
                 "Flat R2 response contains no items used by this integration"
             )
 
-        self._planthome_prefix = None
+        self._planthome_variant = None
         self._flat_api = True
         items = dict(essentials)
         try:
@@ -336,6 +429,7 @@ class RemoconClient:
             # Status-only items are useful but optional. In particular, an
             # outage here must not prevent initial setup or essential polling.
             _LOGGER.debug("Could not fetch optional flat R2 status items: %s", err)
+        self._log_api_variant("flat")
         return items
 
     def _get_flat_item_call(
@@ -345,6 +439,7 @@ class RemoconClient:
         response = self._request(
             "POST",
             f"/R2/PlantHome/GetData/{self._gateway_id}",
+            api_variant="flat",
             json={
                 "useCache": use_cache,
                 "zone": int(self._zone),
@@ -559,19 +654,33 @@ class RemoconClient:
             has_room_sensor=value("ZoneMeasuredTemp") is not None,
         )
 
+    @staticmethod
+    def _current_temperature(raw: Any, section: str, key: str) -> float:
+        """Require a finite current setpoint before building a write payload."""
+        section_data = raw.get(section) if isinstance(raw, dict) else None
+        item = section_data.get(key) if isinstance(section_data, dict) else None
+        value = item.get("value") if isinstance(item, dict) else None
+        message = f"Missing or invalid current temperature: {section}.{key}.value"
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise RemoconDataError(message)
+        try:
+            temperature = float(value)
+        except (TypeError, ValueError, OverflowError) as err:
+            raise RemoconDataError(message) from err
+        if not isfinite(temperature):
+            raise RemoconDataError(message)
+        return temperature
+
     def set_zone_temperatures(
         self, comfort: float | None = None, reduced: float | None = None
     ) -> None:
         """Set comfort and/or reduced temperature."""
         raw = self._get_raw()
         self._require_legacy_write_api()
-        if not isinstance(raw, dict):
-            raw = {}
-        zone = raw.get("zoneData") or {}
-        ch_comf = zone.get("chComfortTemp") or {}
-        ch_red = zone.get("chReducedTemp") or {}
-        old_comf = float(ch_comf.get("value", 0))
-        old_econ = float(ch_red.get("value", 0))
+        # Both current setpoints are required by the API's "old" payload,
+        # even when both new temperatures were supplied by the caller.
+        old_comf = self._current_temperature(raw, "zoneData", "chComfortTemp")
+        old_econ = self._current_temperature(raw, "zoneData", "chReducedTemp")
 
         new_comf = comfort if comfort is not None else old_comf
         new_econ = reduced if reduced is not None else old_econ
@@ -607,13 +716,8 @@ class RemoconClient:
         """Set DHW temperatures."""
         raw = self._get_raw()
         self._require_legacy_write_api()
-        if not isinstance(raw, dict):
-            raw = {}
-        plant = raw.get("plantData") or {}
-        dhw_comf = plant.get("dhwComfortTemp") or {}
-        dhw_red = plant.get("dhwReducedTemp") or {}
-        old_comf = float(dhw_comf.get("value", 0))
-        old_econ = float(dhw_red.get("value", 0))
+        old_comf = self._current_temperature(raw, "plantData", "dhwComfortTemp")
+        old_econ = self._current_temperature(raw, "plantData", "dhwReducedTemp")
 
         new_comf = comfort if comfort is not None else old_comf
         new_econ = reduced if reduced is not None else old_econ
