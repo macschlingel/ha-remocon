@@ -1031,12 +1031,30 @@ class RemoconClient:
         self._set_flat_data_item("PlantMode", mode, 0)
 
     def set_quiet_mode(self, enable: bool) -> None:
-        """Enable or disable quiet mode."""
+        """Enable or disable quiet mode.
+
+        `IsQuite` is exposed by the flat R2 read but not by the v2 dataItems
+        get response on GALEVO gateways, so the previous value comes from the
+        flat R2 items and the write goes through the v2 dataItems set API,
+        which accepts plant-level items at zone 0.
+        """
         value = 1 if enable else 0
-        if self._flat_api:
-            self._set_flat_data_item("IsQuite", value, 0)
-        else:
-            self._set_flat_data_item("IsQuite", value, 0)
+        if not self._flat_api:
+            self._flat_save("PlantMenu", self._get_raw(), "IsQuite", value)
+            return
+        items = self._get_flat_items_cached()
+        item = items.get("IsQuite")
+        if not isinstance(item, dict):
+            raise RemoconDataError(
+                "Item IsQuite is not exposed by this gateway"
+            )
+        self._set_v2_data_items([{
+            "id": "IsQuite",
+            "prevValue": item.get("value"),
+            "value": value,
+            "zone": 0,
+        }])
+        self._confirm_write("IsQuite", value)
 
     def _confirm_write(self, item_id: str, expected_value: Any, max_retries: int = 3) -> None:
         """Confirm a write by re-reading the item with cache disabled.

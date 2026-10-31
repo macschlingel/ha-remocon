@@ -141,8 +141,21 @@ def test_zone_and_plant_writes_use_v2_dataitems_set():
         client.set_plant_mode(3)
         assert_v2_set_call(request, "PlantMode", 3, 0)
 
+
+def test_quiet_mode_uses_flat_prev_value_and_v2_set():
+    client = make_client()
+
+    def fake_request(method, path, **kwargs):
+        assert path.endswith("/set?umsys=si")
+        return {"success": True}
+
+    with patch.object(client, "_get_flat_raw", return_value=ITEMS), patch.object(
+        client, "_confirm_write"
+    ), patch.object(client, "_request", side_effect=fake_request) as request:
         client.set_quiet_mode(True)
-        assert_v2_set_call(request, "IsQuite", 1, 0)
+
+    assert_v2_set_call(request, "IsQuite", 1, 0)
+    assert request.call_args.kwargs["json"]["items"][0]["prevValue"] == 0
 
 
 def test_dhw_mode_and_boost_stay_on_plant_dhw_save():
