@@ -83,6 +83,16 @@ DHW_WRITE_OPTIONAL_ITEM_IDS = (
 )
 DHW_WRITE_ITEM_IDS = DHW_WRITE_REQUIRED_ITEM_IDS + DHW_WRITE_OPTIONAL_ITEM_IDS
 
+# AJAX headers the R2 web app sends with every postJson/getJson call.
+AJAX_HEADERS = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Ajax-Request": "json",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+# Advanced-settings group written together when toggling quiet mode.
+QUIET_MODE_ITEM_IDS = ("IsQuite", "QuietModeStart", "QuietModeEnd")
+
 
 class RemoconApiError(Exception):
     """Base exception for API errors."""
@@ -1035,31 +1045,82 @@ class RemoconClient:
             return
         self._set_flat_data_item("PlantMode", mode, 0)
 
-    def set_quiet_mode(self, enable: bool) -> None:
-        """Enable or disable quiet mode.
+    def _get_advanced_settings(self) -> dict[str, Any]:
+        """Read the advanced-settings items (IsQuite, QuietModeStart/End)."""
+        path = f"/R2/PlantAdvancedSettings/Refresh/{self._gateway_id}"
+        response = self._request(
+            "POST",
+            path,
+            headers=AJAX_HEADERS,
+            json={"features": self._flat_features()},
+        )
+        if not isinstance(response, dict) or not response.get("ok", True):
+            raise RemoconDataError("Advanced settings endpoint returned invalid data")
+        data = response.get("data", {}) if isinstance(response, dict) else {}
+        items = data.get("dataItems", []) if isinstance(data, dict) else []
+        return {
+            str(item["id"]): item
+            for item in items
+            if isinstance(item, dict) and item.get("id") is not None
+        }
 
-        `IsQuite` is exposed by the flat R2 read but not by the v2 dataItems
-        get response on GALEVO gateways, so the previous value comes from the
-        flat R2 items and the write goes through the v2 dataItems set API,
-        which accepts plant-level items at zone 0.
+    def set_quiet_mode(self, enable: bool) -> None:
+        """Enable or disable quiet mode via PlantAdvancedSettings/Save.
+
+        Matches the captured web-app request exactly: read the advanced
+        settings, then POST features + requestItems + prevDataItems with
+        AJAX headers. IsQuite, QuietModeStart and QuietModeEnd are always
+        sent together.
         """
         value = 1 if enable else 0
-        if not self._flat_api:
-            self._flat_save("PlantMenu", self._get_raw(), "IsQuite", value)
-            return
-        items = self._get_flat_items_cached()
-        item = items.get("IsQuite")
-        if not isinstance(item, dict):
+        current = self._get_advanced_settings()
+        missing = [item_id for item_id in QUIET_MODE_ITEM_IDS if item_id not in current]
+        if missing:
             raise RemoconDataError(
-                "Item IsQuite is not exposed by this gateway"
+                f"Quiet-mode prerequisites are missing: {', '.join(missing)}"
             )
-        self._set_v2_data_items([{
-            "id": "IsQuite",
-            "prevValue": item.get("value"),
-            "value": value,
-            "zone": 0,
-        }])
-        self._confirm_v2_write("IsQuite", value, 0)
+
+        request_items = []
+        prev_items = []
+        for item_id in QUIET_MODE_ITEM_IDS:
+            source = current[item_id]
+            prev_items.append({
+                "gatewayId": self._gateway_id,
+                "zone": source.get("zone", 0),
+                "id": item_id,
+                "kind": source.get("kind"),
+                "min": source.get("min"),
+                "max": source.get("max"),
+                "step": source.get("step"),
+                "value": source.get("value"),
+                "decimals": source.get("decimals"),
+                "options": source.get("options") or [],
+                "optTexts": source.get("optTexts") or [],
+                "readOnly": bool(source.get("readOnly")),
+                "error": bool(source.get("error")),
+                "invalid": bool(source.get("invalid")),
+                "expiresOn": source.get("expiresOn"),
+                "unit": source.get("unit"),
+            })
+            request_items.append({
+                "itemId": item_id,
+                "value": value if item_id == "IsQuite" else source.get("value"),
+            })
+
+        path = f"/R2/PlantAdvancedSettings/Save/{self._gateway_id}"
+        response = self._request(
+            "POST",
+            path,
+            headers=AJAX_HEADERS,
+            json={
+                "features": self._flat_features(),
+                "requestItems": request_items,
+                "prevDataItems": prev_items,
+            },
+        )
+        if isinstance(response, dict) and not response.get("ok", True):
+            raise RemoconDataError("Remocon-Net rejected the quiet-mode write")
+        self._confirm_write("IsQuite", value)
 
     def _confirm_write(self, item_id: str, expected_value: Any, max_retries: int = 3) -> None:
         """Confirm a write by re-reading the item with cache disabled.

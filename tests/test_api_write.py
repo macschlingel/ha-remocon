@@ -142,20 +142,33 @@ def test_zone_and_plant_writes_use_v2_dataitems_set():
         assert_v2_set_call(request, "PlantMode", 3, 0)
 
 
-def test_quiet_mode_uses_flat_prev_value_and_v2_set():
+def test_quiet_mode_uses_plant_advanced_settings_save_contract():
     client = make_client()
+    advanced_items = {
+        "IsQuite": {"id": "IsQuite", "zone": 0, "kind": 3, "value": 0, "options": [0, 1]},
+        "QuietModeStart": {"id": "QuietModeStart", "zone": 0, "kind": 1, "value": 5632},
+        "QuietModeEnd": {"id": "QuietModeEnd", "zone": 0, "kind": 1, "value": 1536},
+    }
 
     def fake_request(method, path, **kwargs):
-        assert path.endswith("/set?umsys=si")
-        return {"success": True}
+        if path.endswith("/PlantAdvancedSettings/Refresh/GW123"):
+            return {"ok": True, "data": {"dataItems": list(advanced_items.values())}}
+        assert path == "/R2/PlantAdvancedSettings/Save/GW123"
+        assert kwargs["headers"]["X-Requested-With"] == "XMLHttpRequest"
+        return {"ok": True, "data": {"dataItems": [advanced_items["IsQuite"]]}}
 
-    with patch.object(client, "_get_flat_raw", return_value=ITEMS), patch.object(
-        client, "_confirm_v2_write"
-    ), patch.object(client, "_request", side_effect=fake_request) as request:
+    with patch.object(client, "_request", side_effect=fake_request) as request, \
+            patch.object(client, "_confirm_write"):
         client.set_quiet_mode(True)
 
-    assert_v2_set_call(request, "IsQuite", 1, 0)
-    assert request.call_args.kwargs["json"]["items"][0]["prevValue"] == 0
+    payload = request.call_args.kwargs["json"]
+    assert payload["features"]["gatewayId"] == "GW123"
+    request_ids = {item["itemId"]: item["value"] for item in payload["requestItems"]}
+    assert request_ids == {"IsQuite": 1, "QuietModeStart": 5632, "QuietModeEnd": 1536}
+    prev_by_id = {item["id"]: item for item in payload["prevDataItems"]}
+    assert prev_by_id["IsQuite"]["value"] == 0
+    assert prev_by_id["IsQuite"]["gatewayId"] == "GW123"
+    assert prev_by_id["QuietModeStart"]["value"] == 5632
 
 
 def test_dhw_mode_and_boost_stay_on_plant_dhw_save():
