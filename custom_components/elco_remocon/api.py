@@ -1072,10 +1072,11 @@ class RemoconClient:
                         "useCache": False,
                         "zone": int(self._zone),
                         "filter": {
-                            "notEssentials": False,
+                            "notEssentials": True,
                             "plant": True,
                             "zone": True,
                             "dhw": True,
+                            "progId": 9,
                         },
                         "features": {
                             **FLAT_FEATURES_PAYLOAD,

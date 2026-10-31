@@ -1,6 +1,6 @@
 # Future Feature Requests
 
-Phase 1 adds the verified temperature and mode controls for flat R2 Aerotop MONO gateways. The items below are intentionally deferred until their write endpoints and payloads are verified against a live Remocon-Net session.
+Phase 1 adds the verified temperature and mode controls for flat R2 Aerotop MONO gateways. DHW writes use `/R2/PlantDhw/Save/{gw}`; zone, plant, and quiet-mode writes use the real-device-validated v2 endpoint `/api/v2/remote/dataItems/{gw}/set?umsys=si` ( `/R2/PlantZone/Save` and `/R2/PlantMenu/Save` return 404 on GALEVO-family gateways). The items below are intentionally deferred until their write endpoints and payloads are verified against a live Remocon-Net session.
 
 ## Time programs
 
