@@ -660,6 +660,118 @@ class RemoconClient:
             }],
         }
 
+    def _v2_features(self) -> dict[str, Any]:
+        """Feature profile required by the v2 dataItems get/set API."""
+        zone = int(self._zone)
+        return {
+            **FEATURES_PAYLOAD,
+            "gatewayId": self._gateway_id,
+            "zones": [{
+                "num": zone,
+                "name": "",
+                "roomSens": False,
+                "geofenceDeroga": False,
+                "virtInfo": None,
+                "isHidden": False,
+            }],
+        }
+
+    def _get_v2_data_items(self, item_ids: list[str], zone: int) -> dict[str, Any]:
+        """Read current v2 data items uncached (get uses `zn` per item)."""
+        path = f"/api/v2/remote/dataItems/{self._gateway_id}/get?umsys=si"
+        payload = {
+            "useCache": False,
+            "items": [{"id": item_id, "zn": zone} for item_id in item_ids],
+            "features": self._v2_features(),
+            "culture": "de",
+        }
+        data = self._request("POST", path, json=payload)
+        if not isinstance(data, dict):
+            raise RemoconDataError("Invalid v2 dataItems response")
+        return {
+            str(item["id"]): item
+            for item in data.get("items", [])
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+
+    def _set_v2_data_items(self, writes: list[dict[str, Any]]) -> None:
+        """Write v2 data items (set uses `zone` per item and needs prevValue)."""
+        path = f"/api/v2/remote/dataItems/{self._gateway_id}/set?umsys=si"
+        response = self._request(
+            "POST",
+            path,
+            json={"items": writes, "features": self._v2_features()},
+        )
+        if isinstance(response, dict) and response.get("success") is False:
+            raise RemoconDataError("Remocon-Net rejected the write request")
+
+    def _set_flat_data_item(
+        self,
+        item_id: str,
+        value: Any,
+        zone: int,
+        *,
+        temperature_name: str | None = None,
+    ) -> None:
+        """Write one item on flat-R2 gateways via the validated v2 dataItems API.
+
+        /R2/PlantZone/Save and /R2/PlantMenu/Save do not exist for GALEVO
+        family gateways (404); the v2 dataItems set endpoint is the
+        real-device-validated write path (upstream issue #22).
+        """
+        current = self._get_v2_data_items([item_id], zone)
+        item = current.get(item_id)
+        if not isinstance(item, dict):
+            raise RemoconDataError(
+                f"Item {item_id} is not available on this gateway"
+            )
+        if temperature_name is not None:
+            value = self._validate_temperature(
+                value,
+                float(item.get("min") or 0),
+                float(item.get("max") or 99),
+                float(item.get("step") or 0.5),
+                temperature_name,
+            )
+        self._set_v2_data_items([{
+            "id": item_id,
+            "prevValue": item.get("value"),
+            "value": value,
+            "zone": zone,
+        }])
+        self._confirm_v2_write(item_id, value, zone)
+
+    def _confirm_v2_write(
+        self, item_id: str, expected_value: Any, zone: int, max_retries: int = 3
+    ) -> None:
+        """Confirm a v2 write with an uncached v2 re-read."""
+        import time
+
+        for attempt in range(max_retries):
+            try:
+                current = self._get_v2_data_items([item_id], zone)
+                actual = (current.get(item_id) or {}).get("value")
+                try:
+                    if float(str(actual)) == float(str(expected_value)):
+                        _LOGGER.debug("Write confirmed: %s = %s", item_id, actual)
+                        return
+                except (TypeError, ValueError):
+                    if str(actual) == str(expected_value):
+                        _LOGGER.debug("Write confirmed: %s = %s", item_id, actual)
+                        return
+                _LOGGER.warning(
+                    "Write not yet confirmed (attempt %d): %s = %s, expected %s",
+                    attempt + 1, item_id, actual, expected_value,
+                )
+            except (RemoconConnectionError, RemoconDataError) as err:
+                _LOGGER.debug(
+                    "Confirmation read failed (attempt %d): %s", attempt + 1, err
+                )
+            time.sleep(1)
+        _LOGGER.warning(
+            "Could not confirm write for %s after %d attempts", item_id, max_retries
+        )
+
     def _build_dhw_save_payload(
         self, items: dict[str, Any], item_id: str, new_value: Any
     ) -> dict[str, Any]:
@@ -842,39 +954,55 @@ class RemoconClient:
         if not self._flat_api:
             self.set_zone_temperatures(comfort=value)
             return
-        items = self._get_flat_items_cached()
-        item = items.get("ZoneComfortTemp", {})
-        min_t = float(item.get("min", 5)) if isinstance(item, dict) else 5.0
-        max_t = float(item.get("max", 35)) if isinstance(item, dict) else 35.0
-        step_t = float(item.get("step", 0.5)) if isinstance(item, dict) else 0.5
-
-        validated = self._validate_temperature(value, min_t, max_t, step_t, "Zone comfort temperature")
-        self._flat_save("PlantZone", items, "ZoneComfortTemp", validated)
-        self._confirm_write("ZoneComfortTemp", validated)
+        self._set_flat_data_item(
+            "ZoneComfortTemp",
+            value,
+            int(self._zone),
+            temperature_name="Zone comfort temperature",
+        )
 
     def set_zone_reduced_temperature(self, value: float) -> None:
         """Set zone reduced (economy) temperature."""
         if not self._flat_api:
             self.set_zone_temperatures(reduced=value)
             return
-        items = self._get_flat_items_cached()
-        item = items.get("ZoneEconomyTemp", {})
-        min_t = float(item.get("min", 5)) if isinstance(item, dict) else 5.0
-        max_t = float(item.get("max", 25)) if isinstance(item, dict) else 25.0
-        step_t = float(item.get("step", 0.5)) if isinstance(item, dict) else 0.5
-
-        validated = self._validate_temperature(value, min_t, max_t, step_t, "Zone reduced temperature")
-        self._flat_save("PlantZone", items, "ZoneEconomyTemp", validated)
-        self._confirm_write("ZoneEconomyTemp", validated)
+        zone = int(self._zone)
+        current = self._get_v2_data_items(
+            ["ZoneComfortTemp", "ZoneEconomyTemp"], zone
+        )
+        new_reduced = self._validate_temperature(
+            value,
+            float((current.get("ZoneEconomyTemp") or {}).get("min") or 5),
+            float((current.get("ZoneEconomyTemp") or {}).get("max") or 25),
+            float((current.get("ZoneEconomyTemp") or {}).get("step") or 0.5),
+            "Zone reduced temperature",
+        )
+        comfort = (current.get("ZoneComfortTemp") or {}).get("value")
+        if comfort is not None:
+            try:
+                if float(new_reduced) > float(comfort):
+                    raise RemoconDataError(
+                        f"Reduced ({new_reduced}) must not exceed comfort ({comfort})"
+                    )
+            except (TypeError, ValueError):
+                pass
+        item = current.get("ZoneEconomyTemp")
+        if not isinstance(item, dict):
+            raise RemoconDataError("ZoneEconomyTemp is not available on this gateway")
+        self._set_v2_data_items([{
+            "id": "ZoneEconomyTemp",
+            "prevValue": item.get("value"),
+            "value": new_reduced,
+            "zone": zone,
+        }])
+        self._confirm_v2_write("ZoneEconomyTemp", new_reduced, zone)
 
     def set_zone_mode(self, mode: int) -> None:
         """Set zone mode: 0=off, 2=manual, 3=schedule (time program)."""
         if self._flat_api:
             if mode not in (0, 2, 3):
                 raise RemoconDataError(f"Invalid zone mode for flat R2: {mode}. Must be 0, 2, or 3.")
-            items = self._get_flat_items_cached()
-            self._flat_save("PlantZone", items, "ZoneMode", mode)
-            self._confirm_write("ZoneMode", mode)
+            self._set_flat_data_item("ZoneMode", mode, int(self._zone))
             return
         # Legacy API path
         raw = self._get_raw()
@@ -896,19 +1024,19 @@ class RemoconClient:
             raise RemoconDataError(
                 f"Invalid plant mode: {mode}. Must be 0, 1, 2, 3, or 5."
             )
-        items = self._get_flat_items_cached()
-        # Plant mode is saved via PlantMenu/Submit
-        path = f"/R2/PlantMenu/Submit/{self._gateway_id}"
-        payload = self._build_save_payload(items, "PlantMode", mode)
-        self._request("POST", path, json=payload)
-        self._confirm_write("PlantMode", mode)
+        if not self._flat_api:
+            # Legacy path: plant-level items also go through v2 dataItems.
+            self._set_flat_data_item("PlantMode", mode, 0)
+            return
+        self._set_flat_data_item("PlantMode", mode, 0)
 
     def set_quiet_mode(self, enable: bool) -> None:
         """Enable or disable quiet mode."""
-        items = self._get_flat_items_cached()
         value = 1 if enable else 0
-        self._flat_save("PlantMenu", items, "IsQuite", value)
-        self._confirm_write("IsQuite", value)
+        if self._flat_api:
+            self._set_flat_data_item("IsQuite", value, 0)
+        else:
+            self._set_flat_data_item("IsQuite", value, 0)
 
     def _confirm_write(self, item_id: str, expected_value: Any, max_retries: int = 3) -> None:
         """Confirm a write by re-reading the item with cache disabled.

@@ -150,7 +150,7 @@ The integration uses the same API as the Elco Remocon-Net web app:
 
 - **Login:** Cookie-based authentication via `/R2/Account/Login`
 - **Data:** R2 Web API (`/R2/PlantHome/GetData/`, falling back to `/R2/PlantHomeBsb/GetData/` for BSB-bus systems such as Aerotop/Aquatop, which 500 on the non-BSB path) + v2 REST API (`/api/v2/remote/dataItems/`)
-- **Control:** v2 REST API for legacy systems; flat R2 `PlantDhw`, `PlantZone`, and `PlantMenu` save endpoints for Aerotop MONO systems
+- **Control:** v2 REST API for legacy systems; `/R2/PlantDhw/Save/{gw}` for DHW on Aerotop MONO systems and `/api/v2/remote/dataItems/{gw}/set?umsys=si` for zone, plant, and quiet-mode writes on flat R2 gateways
 - **Platform:** remotethermo.com (Ariston Thermo Group)
 
 ## Contributing

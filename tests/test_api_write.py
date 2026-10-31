@@ -92,7 +92,60 @@ def test_dhw_comfort_temperature_allows_gateways_without_boost_item():
     }
 
 
-def test_mode_and_switch_writes_use_flat_endpoints():
+def _v2_get_response(item_id: str, value, zone: int = 1):
+    return {
+        "items": [
+            {
+                "id": item_id,
+                "value": value,
+                "min": 5,
+                "max": 35,
+                "step": 0.5,
+                "zn": zone,
+            }
+        ]
+    }
+
+
+def assert_v2_set_call(request, item_id: str, value, zone: int):
+    assert request.call_args.args[0] == "POST"
+    assert request.call_args.args[1] == "/api/v2/remote/dataItems/GW123/set?umsys=si"
+    payload = request.call_args.kwargs["json"]
+    assert payload["features"]["gatewayId"] == "GW123"
+    changed = next(item for item in payload["items"] if item["id"] == item_id)
+    assert changed["value"] == value
+    assert changed["zone"] == zone
+    assert "prevValue" in changed
+
+
+def test_zone_and_plant_writes_use_v2_dataitems_set():
+    client = make_client()
+
+    def fake_request(method, path, **kwargs):
+        if path.endswith("/get?umsys=si"):
+            requested = kwargs["json"]["items"][0]["id"]
+            zone = kwargs["json"]["items"][0]["zn"]
+            assert kwargs["json"]["useCache"] is False
+            return _v2_get_response(requested, ITEMS[requested]["value"], zone)
+        assert path.endswith("/set?umsys=si")
+        return {"success": True}
+
+    with patch.object(client, "_request", side_effect=fake_request) as request, \
+            patch.object(client, "_confirm_v2_write"):
+        client.set_zone_comfort_temperature(21.5)
+        assert_v2_set_call(request, "ZoneComfortTemp", 21.5, 1)
+
+        client.set_zone_mode(2)
+        assert_v2_set_call(request, "ZoneMode", 2, 1)
+
+        client.set_plant_mode(3)
+        assert_v2_set_call(request, "PlantMode", 3, 0)
+
+        client.set_quiet_mode(True)
+        assert_v2_set_call(request, "IsQuite", 1, 0)
+
+
+def test_dhw_mode_and_boost_stay_on_plant_dhw_save():
     client = make_client()
     with patch.object(client, "_get_flat_raw", return_value=ITEMS), patch.object(
         client, "_confirm_write"
@@ -103,26 +156,28 @@ def test_mode_and_switch_writes_use_flat_endpoints():
         client.set_dhw_boost(True)
         assert_save_call(request, "/R2/PlantDhw/Save/GW123", "IsDhwBoost", 1)
 
-        client.set_zone_mode(2)
-        assert_save_call(request, "/R2/PlantZone/Save/GW123", "ZoneMode", 2)
 
-        client.set_quiet_mode(True)
-        assert_save_call(request, "/R2/PlantMenu/Save/GW123", "IsQuite", 1)
-
-
-def test_zone_temperature_and_plant_mode_writes():
+def test_zone_reduced_temperature_rejects_value_above_comfort():
     client = make_client()
-    with patch.object(client, "_get_flat_raw", return_value=ITEMS), patch.object(
-        client, "_confirm_write"
-    ), patch.object(client, "_request") as request:
-        client.set_zone_comfort_temperature(21.5)
-        assert_save_call(request, "/R2/PlantZone/Save/GW123", "ZoneComfortTemp", 21.5)
 
-        client.set_zone_reduced_temperature(18.5)
-        assert_save_call(request, "/R2/PlantZone/Save/GW123", "ZoneEconomyTemp", 18.5)
+    def fake_request(method, path, **kwargs):
+        if path.endswith("/get?umsys=si"):
+            ids = [item["id"] for item in kwargs["json"]["items"]]
+            return {"items": [ITEMS[item_id] for item_id in ids]}
+        return {"success": True}
 
-        client.set_plant_mode(3)
-        assert_save_call(request, "/R2/PlantMenu/Submit/GW123", "PlantMode", 3)
+    with patch.object(client, "_request", side_effect=fake_request):
+        with pytest.raises(RemoconDataError, match="must not exceed comfort"):
+            client.set_zone_reduced_temperature(25)
+
+
+def test_v2_set_rejection_raises():
+    client = make_client()
+    with patch.object(
+        client, "_get_v2_data_items", return_value={"ZoneMode": {"value": 3}}
+    ), patch.object(client, "_request", return_value={"success": False}):
+        with pytest.raises(RemoconDataError, match="rejected"):
+            client.set_zone_mode(2)
 
 
 @pytest.mark.parametrize(
@@ -139,8 +194,8 @@ def test_zone_temperature_and_plant_mode_writes():
 def test_write_values_are_validated(method, value):
     client = make_client()
     with patch.object(client, "_get_flat_raw", return_value=ITEMS), patch.object(
-        client, "_confirm_write"
-    ), patch.object(client, "_request"):
+        client, "_get_v2_data_items", return_value=ITEMS
+    ), patch.object(client, "_confirm_write"), patch.object(client, "_request"):
         with pytest.raises(RemoconDataError):
             getattr(client, method)(value)
 
