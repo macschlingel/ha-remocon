@@ -986,6 +986,39 @@ def test_confirmation_read_error_also_raises_data_error():
             client._confirm_write("IsQuite", 1, max_retries=2)
 
 
+@pytest.mark.parametrize("item_id, method, current, requested", [
+    ("DhwTimeProgComfortTemp", "set_dhw_comfort_temperature", "50", 50.5),
+    ("DhwTimeProgEconomyTemp", "set_dhw_reduced_temperature", "40", 40.5),
+])
+def test_dhw_setpoint_write_keeps_device_step_decimals(item_id, method, current, requested):
+    """A 0.5 °C device step must not truncate the requested value to whole degrees."""
+    client = make_client()
+    client._flat_api = True
+    items = {
+        **FLAT_DHW_ITEMS,
+        item_id: {"id": item_id, "value": current, "min": 30, "max": 65, "step": 0.5},
+    }
+    save_calls = []
+
+    def request(method, path, **kwargs):
+        if path.endswith("/PlantDhw/Save/GW123"):
+            save_calls.append(kwargs)
+            return {"ok": True}
+        # Confirmation re-read reports the requested decimal value.
+        return {"ok": True, "data": {"items": [{"id": item_id, "value": str(requested)}]}}
+
+    with patch.object(client, "_get_flat_items_cached", return_value=items), \
+            patch.object(client, "_request", side_effect=request):
+        getattr(client, method)(requested)
+
+    assert len(save_calls) == 1
+    changed = next(
+        item for item in save_calls[0]["json"]["requestItems"]
+        if item["itemId"] == item_id
+    )
+    assert changed["value"] == requested
+
+
 @pytest.mark.parametrize("variant", ["planthome_si", "bsb_si", "bsb_browser", "flat"])
 def test_each_read_variant_logs_successful_duration_at_debug(caplog, variant):
     client = make_client()

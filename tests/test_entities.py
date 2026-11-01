@@ -399,3 +399,28 @@ def test_api_dhw_mode_off_keeps_controls_available(platforms, flat_api):
         for attr, keys in DHW_CONTROL_KEYS.items():
             assert keys <= set(getattr(state, attr)), attr
         assert len(state.water_heaters) == 1
+
+
+def test_dhw_mode_select_switches_from_off_to_timed_after_reload(platforms):
+    """Post-reload with DHW off, choosing "timed" must send DhwMode=1 to the gateway."""
+    state = setup_entities(platforms, RemoconData(
+        dhw_available=True, dhw_enabled=False, dhw_mode=0,
+    ), flat_api=True)
+    select = state.selects["dhw_mode"]
+    assert select.current_option == "disabled"
+
+    written_modes = []
+    state.coordinator.client = types.SimpleNamespace(
+        is_flat_api=True, set_dhw_mode=written_modes.append,
+    )
+
+    async def add_executor_job(fn, *args):
+        return fn(*args)
+
+    state.hass.async_add_executor_job = add_executor_job
+    state.coordinator.async_request_refresh = lambda: asyncio.sleep(0)
+    select.hass = state.hass
+
+    asyncio.run(select.async_select_option("timed"))
+
+    assert written_modes == [1]

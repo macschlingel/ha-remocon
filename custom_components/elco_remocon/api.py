@@ -1064,12 +1064,12 @@ class RemoconClient:
         step_t = float(item.get("step", 1)) if isinstance(item, dict) else 1.0
 
         validated = self._validate_temperature(value, min_t, max_t, step_t, "DHW comfort temperature")
-        self._flat_save("PlantDhw", items, "DhwTimeProgComfortTemp", int(validated))
+        self._flat_save("PlantDhw", items, "DhwTimeProgComfortTemp", validated)
         # Confirm with uncached re-read
-        self._confirm_write("DhwTimeProgComfortTemp", int(validated))
+        self._confirm_write("DhwTimeProgComfortTemp", validated)
 
     def set_dhw_reduced_temperature(self, value: float) -> None:
-        """Set DHW reduced (economy) temperature (30-55°C, whole degrees)."""
+        """Set DHW reduced (economy) temperature (30-55°C, device-reported step)."""
         if not self._flat_api:
             self.set_dhw_temperature(reduced=value)
             return
@@ -1080,8 +1080,8 @@ class RemoconClient:
         step_t = float(item.get("step", 1)) if isinstance(item, dict) else 1.0
 
         validated = self._validate_temperature(value, min_t, max_t, step_t, "DHW reduced temperature")
-        self._flat_save("PlantDhw", items, "DhwTimeProgEconomyTemp", int(validated))
-        self._confirm_write("DhwTimeProgEconomyTemp", int(validated))
+        self._flat_save("PlantDhw", items, "DhwTimeProgEconomyTemp", validated)
+        self._confirm_write("DhwTimeProgEconomyTemp", validated)
 
     def set_dhw_mode(self, mode: int) -> None:
         """Set DHW mode: 0=disabled, 1=timed, 2=continuous."""
