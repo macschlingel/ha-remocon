@@ -37,6 +37,20 @@
       },
       "dhw_temperature": {
         "name": "Warmwassertemperatur"
+      },
+      "dhw_comfort_temp": {
+        "name": "Warmwasser-Komforttemperatur"
+      },
+      "dhw_reduced_temp": {
+        "name": "Warmwasser-Absenktemperatur"
+      }
+    },
+    "binary_sensor": {
+      "flame_sensor": {
+        "name": "Brenner aktiv"
+      },
+      "heat_or_cool_request": {
+        "name": "Heiz-/Kühlanforderung"
       }
     }
   }

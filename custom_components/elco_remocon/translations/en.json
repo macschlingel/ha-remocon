@@ -37,6 +37,20 @@
       },
       "dhw_temperature": {
         "name": "DHW Temperature"
+      },
+      "dhw_comfort_temp": {
+        "name": "DHW Comfort Temperature"
+      },
+      "dhw_reduced_temp": {
+        "name": "DHW Reduced Temperature"
+      }
+    },
+    "binary_sensor": {
+      "flame_sensor": {
+        "name": "Burner Active"
+      },
+      "heat_or_cool_request": {
+        "name": "Heating/Cooling Request"
       }
     }
   }

@@ -15,6 +15,7 @@ from custom_components.elco_remocon.api import (
     RemoconClient,
     RemoconAuthError,
     RemoconConnectionError,
+    RemoconData,
     RemoconDataError,
 )
 
@@ -1305,3 +1306,222 @@ def test_cached_browser_rejection_with_flat_items_does_not_switch_to_flat():
     assert request.call_args_list[0] == request.call_args_list[1]
     assert client._planthome_variant == "bsb_browser"
     assert client.is_flat_api is False
+
+
+def test_new_entity_values_default_to_unknown():
+    data = RemoconData()
+
+    assert data.flame_sensor is None
+    assert data.heat_or_cool_request is None
+    assert data.dhw_comfort_temp is None
+    assert data.dhw_reduced_temp is None
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+def test_absent_optional_fields_remain_unknown(flat_api):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [{"id": "ZoneComfortTemp", "value": 21}]}}
+        if flat_api else GOOD_RESPONSE
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.flame_sensor is None
+    assert data.heat_or_cool_request is None
+    assert data.dhw_comfort_temp is None
+    assert data.dhw_reduced_temp is None
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+@pytest.mark.parametrize("raw_value, expected", [
+    pytest.param(True, True, id="true"),
+    pytest.param(False, False, id="false"),
+    pytest.param(1, True, id="one"),
+    pytest.param(0, False, id="zero"),
+    pytest.param("true", True, id="true-string"),
+    pytest.param("false", False, id="false-string"),
+    pytest.param("1", True, id="one-string"),
+    pytest.param("0", False, id="zero-string"),
+    pytest.param(" TRUE ", True, id="normalized-true-string"),
+    pytest.param(" FALSE ", False, id="normalized-false-string"),
+    pytest.param("yes", True, id="yes"),
+    pytest.param("no", False, id="no"),
+    pytest.param("on", True, id="on"),
+    pytest.param("off", False, id="off"),
+    pytest.param(None, None, id="null"),
+    pytest.param("", None, id="empty"),
+    pytest.param(" \t ", None, id="whitespace"),
+    pytest.param("unknown", None, id="unknown-string"),
+    pytest.param(2, None, id="other-number"),
+    pytest.param([], None, id="list"),
+    pytest.param({}, None, id="object"),
+    pytest.param(float("nan"), None, id="nan"),
+    pytest.param(float("inf"), None, id="infinity"),
+])
+def test_optional_binary_fields_preserve_false_and_reject_unknown(flat_api, raw_value, expected):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [
+            {"id": "ZoneComfortTemp", "value": 21},
+            {"id": "ZoneHeatRequest", "value": raw_value},
+        ]}}
+        if flat_api else {"ok": True, "data": {
+            "plantData": {"flameSensor": raw_value},
+            "zoneData": {"heatOrCoolRequest": raw_value},
+        }}
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.heat_or_cool_request is expected
+    assert data.flame_sensor is (None if flat_api else expected)
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+@pytest.mark.parametrize("raw_value, expected", [
+    pytest.param(50.5, 50.5, id="number"),
+    pytest.param(" 50.5 ", 50.5, id="numeric-string"),
+    pytest.param(0, 0.0, id="zero"),
+    pytest.param("0", 0.0, id="zero-string"),
+    pytest.param(None, None, id="null"),
+    pytest.param("", None, id="empty"),
+    pytest.param(" \t ", None, id="whitespace"),
+    pytest.param("invalid", None, id="malformed"),
+    pytest.param(False, None, id="false"),
+    pytest.param(True, None, id="true"),
+    pytest.param([], None, id="list"),
+    pytest.param({}, None, id="object"),
+    pytest.param(float("nan"), None, id="nan"),
+    pytest.param(float("inf"), None, id="infinity"),
+    pytest.param(float("-inf"), None, id="negative-infinity"),
+    pytest.param("NaN", None, id="nan-string"),
+    pytest.param("inf", None, id="infinity-string"),
+    pytest.param("-inf", None, id="negative-infinity-string"),
+])
+def test_optional_dhw_targets_accept_only_finite_numbers(flat_api, raw_value, expected):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [
+            {"id": "ZoneComfortTemp", "value": 21},
+            {"id": "DhwTimeProgComfortTemp", "value": raw_value},
+            {"id": "DhwTimeProgEconomyTemp", "value": raw_value},
+        ]}}
+        if flat_api else {"ok": True, "data": {
+            "plantData": {
+                "dhwComfortTemp": {"value": raw_value},
+                "dhwReducedTemp": {"value": raw_value},
+            },
+            "zoneData": {},
+        }}
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_comfort_temp == expected
+    assert data.dhw_reduced_temp == expected
+
+
+@pytest.mark.parametrize("target", [None, {}, [], 50, "50"])
+def test_malformed_legacy_dhw_target_objects_remain_unknown(target):
+    client = make_client()
+    response = {"ok": True, "data": {
+        "plantData": {"dhwComfortTemp": target, "dhwReducedTemp": target},
+        "zoneData": {},
+    }}
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_comfort_temp is None
+    assert data.dhw_reduced_temp is None
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+def test_dhw_targets_are_mapped_independently_while_dhw_is_off(flat_api):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [
+            {"id": "DhwMode", "value": "0"},
+            {"id": "DhwTimeProgComfortTemp", "value": "50.5"},
+            {"id": "DhwTimeProgEconomyTemp", "value": "40.5"},
+        ]}}
+        if flat_api else {"ok": True, "data": {
+            "plantData": {
+                "dhwEnabled": False,
+                "dhwComfortTemp": {"value": "50.5"},
+                "dhwReducedTemp": {"value": "40.5"},
+            },
+            "zoneData": {},
+        }}
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_enabled is False
+    assert data.dhw_comfort_temp == 50.5
+    assert data.dhw_reduced_temp == 40.5
+
+
+@pytest.mark.parametrize("request_value", ["1", "true", "yes", "on"])
+@pytest.mark.parametrize("plant_mode, heating, cooling", [(1, True, False), (3, False, True)])
+def test_flat_active_states_retain_existing_request_behavior(request_value, plant_mode, heating, cooling):
+    client = make_client()
+    client._flat_api = True
+    response = {"ok": True, "data": {"items": [
+        {"id": "ZoneHeatRequest", "value": request_value},
+        {"id": "PlantMode", "value": plant_mode},
+    ]}}
+    with patch.object(client, "_request", return_value=response):
+        data = client.get_data()
+
+    assert data.heating_active is heating
+    assert data.cooling_active is cooling
+
+
+@pytest.mark.parametrize("changes, expected", [
+    pytest.param({"comfort": 55}, {"comf": 55, "econ": 40.5}, id="comfort-only"),
+    pytest.param({"reduced": 38}, {"comf": 50.5, "econ": 38}, id="reduced-only"),
+    pytest.param({"comfort": 55, "reduced": 38}, {"comf": 55, "econ": 38}, id="both"),
+])
+def test_legacy_dhw_writes_preserve_untouched_target(changes, expected):
+    client = make_client()
+    response = {"ok": True, "data": {
+        "plantData": {
+            "dhwComfortTemp": {"value": "50.5"},
+            "dhwReducedTemp": {"value": "40.5"},
+        },
+        "zoneData": {},
+    }}
+    with patch.object(client, "_request", side_effect=[response, {"ok": True}]) as request:
+        client.set_dhw_temperature(**changes)
+
+    assert request.call_count == 2
+    assert request.call_args.args == ("POST", "/api/v2/remote/bsbPlantData/GW123/dhwTemp")
+    assert request.call_args.kwargs["json"] == {
+        "new": expected,
+        "old": {"comf": 50.5, "econ": 40.5},
+    }
+
+
+def test_flat_dhw_target_writes_remain_blocked():
+    client = make_client()
+    with patch.object(client, "_request", return_value=flat_response()) as request:
+        with pytest.raises(RemoconDataError, match="Control is disabled"):
+            client.set_dhw_temperature(comfort=55, reduced=38)
+
+    assert request.call_count == 3
+    assert all("/GetData/" in call.args[1] for call in request.call_args_list)

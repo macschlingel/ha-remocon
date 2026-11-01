@@ -89,6 +89,26 @@ After setup, the following entities are created:
 | `binary_sensor.cooling_active` | Binary | Cooling is active |
 | `binary_sensor.heat_pump_on` | Binary | Heat pump is running |
 
+### Additional gateway-dependent entities
+
+These four read-only entities are added when the gateway reports a valid value
+for the corresponding field during setup. The keys use the existing gateway
+and zone unique ID scheme.
+
+| Key | Type | Legacy R2 field | Flat R2 item |
+|-----|------|-----------------|--------------|
+| `flame_sensor` | Binary sensor (burner active) | `plantData.flameSensor` | No verified mapping; omitted |
+| `heat_or_cool_request` | Binary sensor (heating/cooling request) | `zoneData.heatOrCoolRequest` | `ZoneHeatRequest` |
+| `dhw_comfort_temp` | Temperature sensor (DHW comfort setpoint, °C) | `plantData.dhwComfortTemp.value` | `DhwTimeProgComfortTemp` |
+| `dhw_reduced_temp` | Temperature sensor (DHW reduced setpoint, °C) | `plantData.dhwReducedTemp.value` | `DhwTimeProgEconomyTemp` |
+
+An explicit `false` creates a binary sensor with state **off**. Missing, null,
+or invalid values do not create the corresponding entity; they are never
+reported as **off** or 0 °C. An existing entity shows **unknown** if its value
+later disappears. If a previously omitted field becomes available, reload the
+integration to create that entity. DHW setpoints can be displayed even when
+hot water heating is switched off. Flat R2 gateways remain read-only.
+
 ### Climate entity
 
 The climate entity supports:

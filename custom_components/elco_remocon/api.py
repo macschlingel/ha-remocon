@@ -81,6 +81,32 @@ FLAT_RELEVANT_ITEM_IDS = {
 _PlantHomeVariant = Literal["planthome_si", "bsb_si", "bsb_browser"]
 
 
+def _optional_bool(value: Any) -> bool | None:
+    """Parse a reported state without treating missing data as off."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    elif isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    return None
+
+
+def _optional_temperature(value: Any) -> float | None:
+    """Parse an optional setpoint without inventing a zero temperature."""
+    if isinstance(value, bool):
+        return None
+    try:
+        temperature = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return temperature if isfinite(temperature) else None
+
+
 class RemoconApiError(Exception):
     """Base exception for API errors."""
 
@@ -113,16 +139,16 @@ class RemoconData:
     zone_mode_texts: list[str] = field(default_factory=list)
     heating_active: bool | None = False
     cooling_active: bool | None = False
-    heat_or_cool_request: bool = False
+    heat_or_cool_request: bool | None = None
     # Plant
     outside_temp: float = 0.0
     dhw_temp: float = 0.0
-    dhw_comfort_temp: float = 0.0
-    dhw_reduced_temp: float = 0.0
+    dhw_comfort_temp: float | None = None
+    dhw_reduced_temp: float | None = None
     dhw_mode: int = 0
     dhw_enabled: bool = False
     heat_pump_on: bool | None = False
-    flame_sensor: bool = False
+    flame_sensor: bool | None = None
     # System (from v2 API)
     system_pressure: Optional[float] = None
     flow_temperature: Optional[float] = None
@@ -479,15 +505,19 @@ class RemoconClient:
             zone_mode_texts=mode_info.get("allowedOptionTexts", []),
             heating_active=bool(zone.get("isHeatingActive", 0)),
             cooling_active=bool(zone.get("isCoolingActive", 0)),
-            heat_or_cool_request=bool(zone.get("heatOrCoolRequest", 0)),
+            heat_or_cool_request=_optional_bool(zone.get("heatOrCoolRequest")),
             outside_temp=float(plant.get("outsideTemp", 0)),
             dhw_temp=float(plant.get("dhwStorageTemp", 0)),
-            dhw_comfort_temp=float(dhw_comfort.get("value", 0)),
-            dhw_reduced_temp=float(dhw_reduced.get("value", 0)),
+            dhw_comfort_temp=_optional_temperature(
+                dhw_comfort.get("value") if isinstance(dhw_comfort, dict) else None
+            ),
+            dhw_reduced_temp=_optional_temperature(
+                dhw_reduced.get("value") if isinstance(dhw_reduced, dict) else None
+            ),
             dhw_mode=dhw_mode_info.get("value", 0),
             dhw_enabled=bool(plant.get("dhwEnabled", 0)),
             heat_pump_on=bool(plant.get("heatPumpOn", 0)),
-            flame_sensor=bool(plant.get("flameSensor", 0)),
+            flame_sensor=_optional_bool(plant.get("flameSensor")),
             system_pressure=float(pressure) if pressure is not None else None,
             flow_temperature=float(flow) if flow is not None else None,
             has_room_sensor=bool(zone.get("hasRoomSensor", 0)),
@@ -546,16 +576,18 @@ class RemoconClient:
             zone_mode_texts=[str(x) for x in opts] if isinstance(opts, list) else [],
             heating_active=heating_active,
             cooling_active=cooling_active,
-            heat_or_cool_request=request,
+            heat_or_cool_request=_optional_bool(request_value),
             outside_temp=number("OutsideTemp"),
             dhw_temp=number("DhwStorageTemperature"),
-            dhw_comfort_temp=number("DhwTimeProgComfortTemp"),
-            dhw_reduced_temp=number("DhwTimeProgEconomyTemp"),
+            dhw_comfort_temp=_optional_temperature(value("DhwTimeProgComfortTemp")),
+            dhw_reduced_temp=_optional_temperature(value("DhwTimeProgEconomyTemp")),
             dhw_mode=int(number("DhwMode")),
             dhw_enabled=bool(int(number("DhwMode"))),
             heat_pump_on=(
                 boolean("IsHeatingPumpOn") if pump_value is not None else None
             ),
+            # No verified burner-state item is available for flat R2 gateways.
+            flame_sensor=None,
             system_pressure=(
                 number("HeatingCircuitPressure")
                 if value("HeatingCircuitPressure") is not None
