@@ -922,8 +922,9 @@ class RemoconClient:
                     "Confirmation read failed (attempt %d): %s", attempt + 1, err
                 )
             time.sleep(1)
-        _LOGGER.warning(
-            "Could not confirm write for %s after %d attempts", item_id, max_retries
+        raise RemoconDataError(
+            f"Write to {item_id} could not be confirmed after {max_retries} attempts "
+            f"(expected {expected_value})"
         )
 
     def _build_dhw_save_payload(
@@ -1328,8 +1329,9 @@ class RemoconClient:
             import time
             time.sleep(1)
 
-        _LOGGER.warning(
-            "Could not confirm write for %s after %d attempts", item_id, max_retries
+        raise RemoconDataError(
+            f"Write to {item_id} could not be confirmed after {max_retries} attempts "
+            f"(expected {expected_value})"
         )
 
     def reauth(self) -> None:

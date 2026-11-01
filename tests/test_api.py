@@ -902,6 +902,90 @@ def test_writes_keep_original_timeout_and_are_not_timed(method, arguments):
     clock.monotonic.assert_not_called()
 
 
+FLAT_DHW_ITEMS = {
+    "DhwTimeProgComfortTemp": {"id": "DhwTimeProgComfortTemp", "value": "50"},
+    "DhwTimeProgEconomyTemp": {"id": "DhwTimeProgEconomyTemp", "value": "40"},
+    "DhwMode": {"id": "DhwMode", "value": "1"},
+    "DhwStorageTemperature": {"id": "DhwStorageTemperature", "value": "48"},
+}
+
+
+def test_confirmed_flat_write_returns_normally():
+    client = make_client()
+    client._flat_api = True
+
+    def request(method, path, **kwargs):
+        if path.endswith("/PlantDhw/Save/GW123"):
+            return {"ok": True}
+        # Confirmation re-read reports the new value.
+        return {"ok": True, "data": {"items": [{"id": "DhwMode", "value": "2"}]}}
+
+    with patch.object(client, "_get_flat_items_cached", return_value=FLAT_DHW_ITEMS), \
+            patch.object(client, "_request", side_effect=request) as mock_request:
+        client.set_dhw_mode(2)
+
+    assert any(
+        call.args[1].endswith("/PlantDhw/Save/GW123")
+        for call in mock_request.call_args_list
+    )
+
+
+def test_unconfirmed_flat_write_raises_data_error():
+    client = make_client()
+    client._flat_api = True
+    save_calls = []
+
+    def request(method, path, **kwargs):
+        if path.endswith("/PlantDhw/Save/GW123"):
+            save_calls.append(path)
+            return {"ok": True}
+        # Confirmation re-read keeps reporting the old value.
+        return {"ok": True, "data": {"items": [{"id": "DhwMode", "value": "1"}]}}
+
+    with patch.object(client, "_get_flat_items_cached", return_value=FLAT_DHW_ITEMS), \
+            patch.object(client, "_request", side_effect=request), \
+            patch("time.sleep"):
+        with pytest.raises(RemoconDataError, match="could not be confirmed"):
+            client.set_dhw_mode(2)
+
+    # The write was still sent; only the confirmation failed.
+    assert save_calls == ["/R2/PlantDhw/Save/GW123"]
+
+
+def test_unconfirmed_v2_write_raises_data_error():
+    client = make_client()
+    client._flat_api = True
+    items = {
+        "ZoneComfortTemp": {"id": "ZoneComfortTemp", "value": "21.5"},
+        "ZoneEconomyTemp": {
+            "id": "ZoneEconomyTemp", "value": "18", "min": 5, "max": 25, "step": 0.5,
+        },
+    }
+    with patch.object(client, "_get_v2_data_items", return_value=items), \
+            patch.object(client, "_set_v2_data_items") as mock_write, \
+            patch("time.sleep"):
+        with pytest.raises(RemoconDataError, match="could not be confirmed"):
+            client.set_zone_reduced_temperature(20)
+
+    mock_write.assert_called_once()
+
+
+def test_confirmed_v2_write_returns_normally():
+    client = make_client()
+    confirmed = {"ZoneEconomyTemp": {"id": "ZoneEconomyTemp", "value": "20"}}
+    with patch.object(client, "_get_v2_data_items", return_value=confirmed):
+        client._confirm_v2_write("ZoneEconomyTemp", 20, 1, max_retries=3)
+
+
+def test_confirmation_read_error_also_raises_data_error():
+    client = make_client()
+    with patch.object(
+        client, "_request", side_effect=RemoconConnectionError("read failed")
+    ), patch("time.sleep"):
+        with pytest.raises(RemoconDataError, match="could not be confirmed"):
+            client._confirm_write("IsQuite", 1, max_retries=2)
+
+
 @pytest.mark.parametrize("variant", ["planthome_si", "bsb_si", "bsb_browser", "flat"])
 def test_each_read_variant_logs_successful_duration_at_debug(caplog, variant):
     client = make_client()
