@@ -1526,3 +1526,53 @@ def test_flat_dhw_target_writes_remain_blocked():
 
     assert request.call_count == 3
     assert all("/GetData/" in call.args[1] for call in request.call_args_list)
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+@pytest.mark.parametrize("mode_value, expected_enabled", [
+    ("0", False),
+    ("1", True),
+    ("2", True),
+])
+def test_dhw_available_reflects_mode_item_presence_not_current_mode(
+    flat_api, mode_value, expected_enabled
+):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [
+            {"id": "ZoneComfortTemp", "value": 21},
+            {"id": "DhwMode", "value": mode_value},
+        ]}}
+        if flat_api else {"ok": True, "data": {
+            "plantData": {
+                "dhwEnabled": bool(int(mode_value)),
+                "dhwMode": {"value": int(mode_value)},
+            },
+            "zoneData": {},
+        }}
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_available is True
+    assert data.dhw_enabled is expected_enabled
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+def test_dhw_unavailable_when_mode_item_is_missing(flat_api):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [{"id": "ZoneComfortTemp", "value": 21}]}}
+        if flat_api else GOOD_RESPONSE
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_available is False
+    assert data.dhw_enabled is False

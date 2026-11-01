@@ -67,7 +67,7 @@ SELECTS: tuple[ElcoSelectDescription, ...] = (
         reverse_map=DHW_MODE_REVERSE,
         mode_map=DHW_MODE_MAP,
         set_fn=lambda client, m: client.set_dhw_mode(m),
-        exists_fn=lambda d: d.dhw_enabled,
+        exists_fn=lambda d: d.dhw_available,
     ),
     ElcoSelectDescription(
         key="plant_mode",

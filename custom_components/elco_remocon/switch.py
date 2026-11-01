@@ -39,7 +39,7 @@ SWITCHES: tuple[ElcoSwitchDescription, ...] = (
         is_on_fn=lambda d: d.dhw_boost,
         turn_on_fn=lambda client: client.set_dhw_boost(True),
         turn_off_fn=lambda client: client.set_dhw_boost(False),
-        exists_fn=lambda d: d.dhw_enabled and d.dhw_boost_available,
+        exists_fn=lambda d: d.dhw_available and d.dhw_boost_available,
     ),
     ElcoSwitchDescription(
         key="quiet_mode",

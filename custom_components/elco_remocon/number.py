@@ -46,7 +46,7 @@ NUMBERS: tuple[ElcoNumberDescription, ...] = (
         max_fn=lambda d: d.dhw_comfort_temp_max,
         step_fn=lambda d: d.dhw_comfort_temp_step,
         set_fn=lambda client, v: client.set_dhw_comfort_temperature(v),
-        exists_fn=lambda d: d.dhw_enabled,
+        exists_fn=lambda d: d.dhw_available,
     ),
     ElcoNumberDescription(
         key="dhw_reduced_temperature",
@@ -56,7 +56,7 @@ NUMBERS: tuple[ElcoNumberDescription, ...] = (
         max_fn=lambda d: d.dhw_reduced_temp_max,
         step_fn=lambda d: d.dhw_reduced_temp_step,
         set_fn=lambda client, v: client.set_dhw_reduced_temperature(v),
-        exists_fn=lambda d: d.dhw_enabled,
+        exists_fn=lambda d: d.dhw_available,
     ),
     ElcoNumberDescription(
         key="zone_comfort_temperature",

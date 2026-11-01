@@ -169,6 +169,7 @@ class RemoconData:
     dhw_reduced_temp: float | None = None
     dhw_mode: int = 0
     dhw_enabled: bool = False
+    dhw_available: bool = False
     dhw_boost: bool = False
     dhw_boost_available: bool = False
     dhw_comfort_temp_min: float = 35.0
@@ -554,6 +555,7 @@ class RemoconClient:
             ),
             dhw_mode=dhw_mode_info.get("value", 0),
             dhw_enabled=bool(plant.get("dhwEnabled", 0)),
+            dhw_available="dhwMode" in plant,
             heat_pump_on=bool(plant.get("heatPumpOn", 0)),
             flame_sensor=_optional_bool(plant.get("flameSensor")),
             system_pressure=float(pressure) if pressure is not None else None,
@@ -656,6 +658,7 @@ class RemoconClient:
             dhw_reduced_temp=_optional_temperature(value("DhwTimeProgEconomyTemp")),
             dhw_mode=dhw_mode_val,
             dhw_enabled=dhw_mode_val > 0,
+            dhw_available="DhwMode" in items,
             dhw_boost=dhw_boost,
             dhw_boost_available="IsDhwBoost" in items,
             dhw_comfort_temp_min=dhw_comf_min,

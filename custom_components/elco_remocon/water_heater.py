@@ -61,9 +61,9 @@ async def async_setup_entry(
         )
         return
 
-    if not coordinator.data.dhw_enabled:
+    if not coordinator.data.dhw_available:
         _LOGGER.info(
-            "Skipping water heater for gateway %s — DHW not available",
+            "Skipping water heater for gateway %s — DHW not supported",
             entry.data["gateway_id"],
         )
         return
