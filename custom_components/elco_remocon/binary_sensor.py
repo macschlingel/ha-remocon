@@ -56,6 +56,18 @@ BINARY_SENSORS: tuple[ElcoBinarySensorDescription, ...] = (
         translation_key="dhw_enabled",
         value_fn=lambda d: d.dhw_enabled,
     ),
+    ElcoBinarySensorDescription(
+        key="flame_sensor",
+        translation_key="flame_sensor",
+        value_fn=lambda d: d.flame_sensor,
+        exists_fn=lambda d: d.flame_sensor is not None,
+    ),
+    ElcoBinarySensorDescription(
+        key="heat_or_cool_request",
+        translation_key="heat_or_cool_request",
+        value_fn=lambda d: d.heat_or_cool_request,
+        exists_fn=lambda d: d.heat_or_cool_request is not None,
+    ),
 )
 
 

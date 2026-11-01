@@ -41,7 +41,7 @@ NUMBERS: tuple[ElcoNumberDescription, ...] = (
     ElcoNumberDescription(
         key="dhw_comfort_temperature",
         translation_key="dhw_comfort_temperature",
-        value_fn=lambda d: d.dhw_comfort_temp if d.dhw_comfort_temp > 0 else None,
+        value_fn=lambda d: d.dhw_comfort_temp if d.dhw_comfort_temp and d.dhw_comfort_temp > 0 else None,
         min_fn=lambda d: d.dhw_comfort_temp_min,
         max_fn=lambda d: d.dhw_comfort_temp_max,
         step_fn=lambda d: d.dhw_comfort_temp_step,
@@ -51,7 +51,7 @@ NUMBERS: tuple[ElcoNumberDescription, ...] = (
     ElcoNumberDescription(
         key="dhw_reduced_temperature",
         translation_key="dhw_reduced_temperature",
-        value_fn=lambda d: d.dhw_reduced_temp if d.dhw_reduced_temp > 0 else None,
+        value_fn=lambda d: d.dhw_reduced_temp if d.dhw_reduced_temp and d.dhw_reduced_temp > 0 else None,
         min_fn=lambda d: d.dhw_reduced_temp_min,
         max_fn=lambda d: d.dhw_reduced_temp_max,
         step_fn=lambda d: d.dhw_reduced_temp_step,

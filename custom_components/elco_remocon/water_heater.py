@@ -110,7 +110,7 @@ class ElcoWaterHeater(CoordinatorEntity[ElcoRemoconCoordinator], WaterHeaterEnti
     def target_temperature(self) -> float | None:
         """Return the target DHW comfort temperature."""
         data = self.coordinator.data
-        return data.dhw_comfort_temp if data.dhw_comfort_temp > 0 else None
+        return data.dhw_comfort_temp if data.dhw_comfort_temp and data.dhw_comfort_temp > 0 else None
 
     @property
     def min_temp(self) -> float:
