@@ -92,7 +92,7 @@ SENSORS: tuple[ElcoSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         value_fn=lambda d: d.dhw_temp if d.dhw_temp > 0 else None,
-        exists_fn=lambda d: d.dhw_enabled,
+        exists_fn=lambda d: d.dhw_available,
     ),
     ElcoSensorDescription(
         key="dhw_comfort_temp",

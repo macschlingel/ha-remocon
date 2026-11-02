@@ -163,6 +163,7 @@ def test_http_200_flat_response_is_detected_and_mapped():
     assert data.zone_mode == 3
     assert data.outside_temp == -4.5
     assert data.dhw_temp == 48
+    assert data.dhw_boost_available is False
     assert data.heat_pump_on is True
     assert client._flat_api is True
 
@@ -901,6 +902,123 @@ def test_writes_keep_original_timeout_and_are_not_timed(method, arguments):
     clock.monotonic.assert_not_called()
 
 
+FLAT_DHW_ITEMS = {
+    "DhwTimeProgComfortTemp": {"id": "DhwTimeProgComfortTemp", "value": "50"},
+    "DhwTimeProgEconomyTemp": {"id": "DhwTimeProgEconomyTemp", "value": "40"},
+    "DhwMode": {"id": "DhwMode", "value": "1"},
+    "DhwStorageTemperature": {"id": "DhwStorageTemperature", "value": "48"},
+}
+
+
+def test_confirmed_flat_write_returns_normally():
+    client = make_client()
+    client._flat_api = True
+
+    def request(method, path, **kwargs):
+        if path.endswith("/PlantDhw/Save/GW123"):
+            return {"ok": True}
+        # Confirmation re-read reports the new value.
+        return {"ok": True, "data": {"items": [{"id": "DhwMode", "value": "2"}]}}
+
+    with patch.object(client, "_get_flat_items_cached", return_value=FLAT_DHW_ITEMS), \
+            patch.object(client, "_request", side_effect=request) as mock_request:
+        client.set_dhw_mode(2)
+
+    assert any(
+        call.args[1].endswith("/PlantDhw/Save/GW123")
+        for call in mock_request.call_args_list
+    )
+
+
+def test_unconfirmed_flat_write_raises_data_error():
+    client = make_client()
+    client._flat_api = True
+    save_calls = []
+
+    def request(method, path, **kwargs):
+        if path.endswith("/PlantDhw/Save/GW123"):
+            save_calls.append(path)
+            return {"ok": True}
+        # Confirmation re-read keeps reporting the old value.
+        return {"ok": True, "data": {"items": [{"id": "DhwMode", "value": "1"}]}}
+
+    with patch.object(client, "_get_flat_items_cached", return_value=FLAT_DHW_ITEMS), \
+            patch.object(client, "_request", side_effect=request), \
+            patch("time.sleep"):
+        with pytest.raises(RemoconDataError, match="could not be confirmed"):
+            client.set_dhw_mode(2)
+
+    # The write was still sent; only the confirmation failed.
+    assert save_calls == ["/R2/PlantDhw/Save/GW123"]
+
+
+def test_unconfirmed_v2_write_raises_data_error():
+    client = make_client()
+    client._flat_api = True
+    items = {
+        "ZoneComfortTemp": {"id": "ZoneComfortTemp", "value": "21.5"},
+        "ZoneEconomyTemp": {
+            "id": "ZoneEconomyTemp", "value": "18", "min": 5, "max": 25, "step": 0.5,
+        },
+    }
+    with patch.object(client, "_get_v2_data_items", return_value=items), \
+            patch.object(client, "_set_v2_data_items") as mock_write, \
+            patch("time.sleep"):
+        with pytest.raises(RemoconDataError, match="could not be confirmed"):
+            client.set_zone_reduced_temperature(20)
+
+    mock_write.assert_called_once()
+
+
+def test_confirmed_v2_write_returns_normally():
+    client = make_client()
+    confirmed = {"ZoneEconomyTemp": {"id": "ZoneEconomyTemp", "value": "20"}}
+    with patch.object(client, "_get_v2_data_items", return_value=confirmed):
+        client._confirm_v2_write("ZoneEconomyTemp", 20, 1, max_retries=3)
+
+
+def test_confirmation_read_error_also_raises_data_error():
+    client = make_client()
+    with patch.object(
+        client, "_request", side_effect=RemoconConnectionError("read failed")
+    ), patch("time.sleep"):
+        with pytest.raises(RemoconDataError, match="could not be confirmed"):
+            client._confirm_write("IsQuite", 1, max_retries=2)
+
+
+@pytest.mark.parametrize("item_id, method, current, requested", [
+    ("DhwTimeProgComfortTemp", "set_dhw_comfort_temperature", "50", 50.5),
+    ("DhwTimeProgEconomyTemp", "set_dhw_reduced_temperature", "40", 40.5),
+])
+def test_dhw_setpoint_write_keeps_device_step_decimals(item_id, method, current, requested):
+    """A 0.5 °C device step must not truncate the requested value to whole degrees."""
+    client = make_client()
+    client._flat_api = True
+    items = {
+        **FLAT_DHW_ITEMS,
+        item_id: {"id": item_id, "value": current, "min": 30, "max": 65, "step": 0.5},
+    }
+    save_calls = []
+
+    def request(method, path, **kwargs):
+        if path.endswith("/PlantDhw/Save/GW123"):
+            save_calls.append(kwargs)
+            return {"ok": True}
+        # Confirmation re-read reports the requested decimal value.
+        return {"ok": True, "data": {"items": [{"id": item_id, "value": str(requested)}]}}
+
+    with patch.object(client, "_get_flat_items_cached", return_value=items), \
+            patch.object(client, "_request", side_effect=request):
+        getattr(client, method)(requested)
+
+    assert len(save_calls) == 1
+    changed = next(
+        item for item in save_calls[0]["json"]["requestItems"]
+        if item["itemId"] == item_id
+    )
+    assert changed["value"] == requested
+
+
 @pytest.mark.parametrize("variant", ["planthome_si", "bsb_si", "bsb_browser", "flat"])
 def test_each_read_variant_logs_successful_duration_at_debug(caplog, variant):
     client = make_client()
@@ -1525,3 +1643,53 @@ def test_flat_dhw_target_writes_remain_blocked():
 
     assert request.call_count == 3
     assert all("/GetData/" in call.args[1] for call in request.call_args_list)
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+@pytest.mark.parametrize("mode_value, expected_enabled", [
+    ("0", False),
+    ("1", True),
+    ("2", True),
+])
+def test_dhw_available_reflects_mode_item_presence_not_current_mode(
+    flat_api, mode_value, expected_enabled
+):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [
+            {"id": "ZoneComfortTemp", "value": 21},
+            {"id": "DhwMode", "value": mode_value},
+        ]}}
+        if flat_api else {"ok": True, "data": {
+            "plantData": {
+                "dhwEnabled": bool(int(mode_value)),
+                "dhwMode": {"value": int(mode_value)},
+            },
+            "zoneData": {},
+        }}
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_available is True
+    assert data.dhw_enabled is expected_enabled
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+def test_dhw_unavailable_when_mode_item_is_missing(flat_api):
+    client = make_client()
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [{"id": "ZoneComfortTemp", "value": 21}]}}
+        if flat_api else GOOD_RESPONSE
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_available is False
+    assert data.dhw_enabled is False

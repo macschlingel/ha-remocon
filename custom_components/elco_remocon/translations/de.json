@@ -52,6 +52,66 @@
       "heat_or_cool_request": {
         "name": "Heiz-/Kühlanforderung"
       }
+    },
+    "number": {
+      "dhw_comfort_temperature": {
+        "name": "Warmwasser Komforttemperatur"
+      },
+      "dhw_reduced_temperature": {
+        "name": "Warmwasser Absenktemperatur"
+      },
+      "zone_comfort_temperature": {
+        "name": "Zonen Komforttemperatur"
+      },
+      "zone_reduced_temperature": {
+        "name": "Zonen Absenktemperatur"
+      }
+    },
+    "select": {
+      "dhw_mode": {
+        "name": "Warmwasser-Modus",
+        "state": {
+          "disabled": "Deaktiviert",
+          "timed": "Zeitgesteuert",
+          "continuous": "Dauerbetrieb"
+        }
+      },
+      "plant_mode": {
+        "name": "Anlagen-Modus",
+        "state": {
+          "summer": "Sommer",
+          "winter": "Winter",
+          "heating_only": "Nur Heizen",
+          "cooling": "Kühlen",
+          "off": "Aus"
+        }
+      },
+      "zone_mode": {
+        "name": "Zonen-Modus",
+        "state": {
+          "off": "Aus",
+          "manual": "Manuell",
+          "time_program": "Zeitprogramm"
+        }
+      }
+    },
+    "water_heater": {
+      "dhw_water_heater": {
+        "name": "Warmwasser",
+        "state": {
+          "timed": "Zeitgesteuert",
+          "continuous": "Dauerbetrieb",
+          "off": "Aus"
+        }
+      }
+    },
+    "switch": {
+      "dhw_boost": {
+        "name": "Warmwasser-Schnellheizung"
+      },
+      "quiet_mode": {
+        "name": "Leiser Betrieb"
+      }
     }
   }
 }

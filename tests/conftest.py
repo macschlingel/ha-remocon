@@ -59,7 +59,13 @@ const = _module("homeassistant.const")
 const.CONF_EMAIL = "email"
 const.CONF_PASSWORD = "password"
 const.Platform = types.SimpleNamespace(
-    CLIMATE="climate", SENSOR="sensor", BINARY_SENSOR="binary_sensor"
+    CLIMATE="climate",
+    SENSOR="sensor",
+    BINARY_SENSOR="binary_sensor",
+    NUMBER="number",
+    SELECT="select",
+    WATER_HEATER="water_heater",
+    SWITCH="switch",
 )
 
 core = _module("homeassistant.core")

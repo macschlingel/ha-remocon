@@ -52,6 +52,66 @@
       "heat_or_cool_request": {
         "name": "Heating/Cooling Request"
       }
+    },
+    "number": {
+      "dhw_comfort_temperature": {
+        "name": "DHW Comfort Temperature"
+      },
+      "dhw_reduced_temperature": {
+        "name": "DHW Reduced Temperature"
+      },
+      "zone_comfort_temperature": {
+        "name": "Zone Comfort Temperature"
+      },
+      "zone_reduced_temperature": {
+        "name": "Zone Reduced Temperature"
+      }
+    },
+    "select": {
+      "dhw_mode": {
+        "name": "DHW Mode",
+        "state": {
+          "disabled": "Disabled",
+          "timed": "Timed",
+          "continuous": "Continuous"
+        }
+      },
+      "plant_mode": {
+        "name": "Plant Mode",
+        "state": {
+          "summer": "Summer",
+          "winter": "Winter",
+          "heating_only": "Heating Only",
+          "cooling": "Cooling",
+          "off": "Off"
+        }
+      },
+      "zone_mode": {
+        "name": "Zone Mode",
+        "state": {
+          "off": "Off",
+          "manual": "Manual",
+          "time_program": "Time Program"
+        }
+      }
+    },
+    "water_heater": {
+      "dhw_water_heater": {
+        "name": "DHW Water Heater",
+        "state": {
+          "timed": "Timed",
+          "continuous": "Continuous",
+          "off": "Off"
+        }
+      }
+    },
+    "switch": {
+      "dhw_boost": {
+        "name": "DHW Boost"
+      },
+      "quiet_mode": {
+        "name": "Quiet Mode"
+      }
     }
   }
 }

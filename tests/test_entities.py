@@ -61,6 +61,10 @@ def platforms():
         COOLING = "cooling"
         IDLE = "idle"
 
+    class WaterHeaterEntityFeature(IntFlag):
+        TARGET_TEMPERATURE = 1
+        OPERATION_MODE = 2
+
     with pytest.MonkeyPatch.context() as monkeypatch:
         def module(name, **attributes):
             value = types.ModuleType(name)
@@ -89,17 +93,38 @@ def platforms():
             HVACMode=HVACMode,
             HVACAction=HVACAction,
         )
+        module(
+            "homeassistant.components.select",
+            SelectEntity=type("SelectEntity", (Entity,), {}),
+            SelectEntityDescription=EntityDescription,
+        )
+        module(
+            "homeassistant.components.number",
+            NumberEntity=type("NumberEntity", (Entity,), {}),
+            NumberEntityDescription=EntityDescription,
+        )
+        module(
+            "homeassistant.components.switch",
+            SwitchEntity=type("SwitchEntity", (Entity,), {}),
+            SwitchEntityDescription=EntityDescription,
+        )
+        module(
+            "homeassistant.components.water_heater",
+            WaterHeaterEntity=type("WaterHeaterEntity", (Entity,), {}),
+            WaterHeaterEntityFeature=WaterHeaterEntityFeature,
+        )
         module("homeassistant.helpers.entity_platform", AddConfigEntryEntitiesCallback=object)
         module("homeassistant.helpers.typing", StateType=object)
         const = sys.modules["homeassistant.const"]
-        monkeypatch.setattr(const, "EntityCategory", types.SimpleNamespace(DIAGNOSTIC="diagnostic"), raising=False)
+        monkeypatch.setattr(const, "EntityCategory", types.SimpleNamespace(DIAGNOSTIC="diagnostic", CONFIG="config"), raising=False)
         monkeypatch.setattr(const, "UnitOfPressure", types.SimpleNamespace(BAR="bar"), raising=False)
         monkeypatch.setattr(const, "UnitOfTemperature", types.SimpleNamespace(CELSIUS="°C"), raising=False)
+        monkeypatch.setattr(const, "ATTR_TEMPERATURE", "temperature", raising=False)
         monkeypatch.setattr(
             sys.modules["homeassistant.helpers.update_coordinator"],
             "CoordinatorEntity", CoordinatorEntity, raising=False,
         )
-        names = ("sensor", "binary_sensor", "climate")
+        names = ("sensor", "binary_sensor", "climate", "select", "number", "switch", "water_heater")
         module_names = [f"custom_components.elco_remocon.{name}" for name in names]
         for name in module_names:
             monkeypatch.delitem(sys.modules, name, raising=False)
@@ -125,12 +150,24 @@ def setup_entities(platforms, data, zone="1", flat_api=False):
     hass = types.SimpleNamespace(data={DOMAIN: {entry.entry_id: coordinator}})
     sensors = []
     binaries = []
+    selects = []
+    numbers = []
+    switches = []
+    water_heaters = []
     asyncio.run(platforms.sensor.async_setup_entry(hass, entry, sensors.extend))
     asyncio.run(platforms.binary_sensor.async_setup_entry(hass, entry, binaries.extend))
+    asyncio.run(platforms.select.async_setup_entry(hass, entry, selects.extend))
+    asyncio.run(platforms.number.async_setup_entry(hass, entry, numbers.extend))
+    asyncio.run(platforms.switch.async_setup_entry(hass, entry, switches.extend))
+    asyncio.run(platforms.water_heater.async_setup_entry(hass, entry, water_heaters.extend))
     return types.SimpleNamespace(
         coordinator=coordinator, entry=entry, hass=hass,
         sensors={entity.entity_description.key: entity for entity in sensors},
         binaries={entity.entity_description.key: entity for entity in binaries},
+        selects={entity.entity_description.key: entity for entity in selects},
+        numbers={entity.entity_description.key: entity for entity in numbers},
+        switches={entity.entity_description.key: entity for entity in switches},
+        water_heaters=water_heaters,
     )
 
 
@@ -138,8 +175,8 @@ def test_existing_sensor_and_binary_entities_are_preserved(platforms):
     state = setup_entities(platforms, RemoconData(
         outside_temp=-4.5, desired_temp=21.5, reduced_temp=18.0,
         flow_temperature=32.5, system_pressure=1.8, dhw_temp=48.0,
-        dhw_enabled=True, heating_active=True, cooling_active=False,
-        heat_pump_on=True,
+        dhw_enabled=True, dhw_available=True, heating_active=True,
+        cooling_active=False, heat_pump_on=True,
     ))
 
     assert set(state.sensors) == EXISTING_SENSOR_KEYS
@@ -284,3 +321,106 @@ def test_climate_keeps_working_with_unknown_heat_or_cool_request(platforms, heat
     assert climate.target_temperature == 21.5
     assert climate.hvac_mode == "auto"
     assert climate.hvac_action == expected_action
+
+
+DHW_CONTROL_KEYS = {
+    "selects": {"dhw_mode"},
+    "numbers": {"dhw_comfort_temperature", "dhw_reduced_temperature"},
+    "switches": {"dhw_boost"},
+}
+
+
+def test_dhw_controls_are_created_while_dhw_mode_is_off(platforms):
+    """DHW controls must exist whenever the gateway supports DHW, even if the
+    current DHW mode is "disabled" — otherwise DHW can never be re-enabled."""
+    state = setup_entities(platforms, RemoconData(
+        dhw_available=True, dhw_enabled=False, dhw_mode=0,
+        dhw_boost_available=True, dhw_boost=False,
+        dhw_comfort_temp=50.5, dhw_reduced_temp=40.5, dhw_temp=48.0,
+    ), flat_api=True)
+
+    for attr, keys in DHW_CONTROL_KEYS.items():
+        assert keys <= set(getattr(state, attr)), attr
+    assert "quiet_mode" in state.switches
+    assert len(state.water_heaters) == 1
+    assert state.sensors["dhw_temp"].native_value == 48.0
+    assert state.binaries["dhw_enabled"].is_on is False
+
+
+def test_dhw_controls_are_skipped_when_gateway_has_no_dhw(platforms):
+    state = setup_entities(platforms, RemoconData(dhw_available=False), flat_api=True)
+
+    for attr, keys in DHW_CONTROL_KEYS.items():
+        assert not (keys & set(getattr(state, attr))), attr
+    assert state.water_heaters == []
+    assert "dhw_temp" not in state.sensors
+    # Unrelated controls are unaffected by the DHW capability flag.
+    assert "zone_mode" in state.selects
+    assert "zone_comfort_temperature" in state.numbers
+    assert "quiet_mode" in state.switches
+
+
+@pytest.mark.parametrize("flat_api", [False, True], ids=["legacy", "flat"])
+def test_api_dhw_mode_off_keeps_controls_available(platforms, flat_api):
+    client = RemoconClient("e@example.com", "pw", "GW123")
+    client._flat_api = flat_api
+    response = (
+        {"ok": True, "data": {"items": [
+            {"id": "ZoneComfortTemp", "value": 21},
+            {"id": "DhwMode", "value": "0"},
+            {"id": "IsDhwBoost", "value": "0"},
+            {"id": "DhwStorageTemperature", "value": "48"},
+            {"id": "DhwTimeProgComfortTemp", "value": "50.5"},
+            {"id": "DhwTimeProgEconomyTemp", "value": "40.5"},
+        ]}}
+        if flat_api else {"ok": True, "data": {
+            "plantData": {
+                "dhwEnabled": False,
+                "dhwMode": {"value": 0},
+                "dhwStorageTemp": 48,
+                "dhwComfortTemp": {"value": "50.5"},
+                "dhwReducedTemp": {"value": "40.5"},
+            },
+            "zoneData": {},
+        }}
+    )
+    with patch.object(client, "_request", return_value=response), patch.object(
+        client, "_get_system_items", return_value={}
+    ):
+        data = client.get_data()
+
+    assert data.dhw_available is True
+    assert data.dhw_enabled is False
+    state = setup_entities(platforms, data, flat_api=flat_api)
+    # The DHW temperature sensor is created for both API families...
+    assert "dhw_temp" in state.sensors
+    if flat_api:
+        # ...while the writable controls only exist for flat R2 gateways.
+        for attr, keys in DHW_CONTROL_KEYS.items():
+            assert keys <= set(getattr(state, attr)), attr
+        assert len(state.water_heaters) == 1
+
+
+def test_dhw_mode_select_switches_from_off_to_timed_after_reload(platforms):
+    """Post-reload with DHW off, choosing "timed" must send DhwMode=1 to the gateway."""
+    state = setup_entities(platforms, RemoconData(
+        dhw_available=True, dhw_enabled=False, dhw_mode=0,
+    ), flat_api=True)
+    select = state.selects["dhw_mode"]
+    assert select.current_option == "disabled"
+
+    written_modes = []
+    state.coordinator.client = types.SimpleNamespace(
+        is_flat_api=True, set_dhw_mode=written_modes.append,
+    )
+
+    async def add_executor_job(fn, *args):
+        return fn(*args)
+
+    state.hass.async_add_executor_job = add_executor_job
+    state.coordinator.async_request_refresh = lambda: asyncio.sleep(0)
+    select.hass = state.hass
+
+    asyncio.run(select.async_select_option("timed"))
+
+    assert written_modes == [1]
