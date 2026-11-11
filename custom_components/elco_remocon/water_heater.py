@@ -44,6 +44,23 @@ API_TO_OPERATION: dict[int, str] = {
     0: OPERATION_OFF,
 }
 
+# Legacy BSB gateways (Remocon-Net B on Siemens LMS/RVS controllers):
+# DHW operating mode 0=Off, 1=On, 2=Eco, written via bsbPlantData/dhwMode.
+OPERATION_ON = "on"
+OPERATION_ECO = "eco"
+
+BSB_OPERATION_LIST = [OPERATION_ON, OPERATION_ECO, OPERATION_OFF]
+
+BSB_OPERATION_TO_API: dict[str, int] = {
+    OPERATION_OFF: 0,
+    OPERATION_ON: 1,
+    OPERATION_ECO: 2,
+}
+
+BSB_API_TO_OPERATION: dict[int, str] = {
+    v: k for k, v in BSB_OPERATION_TO_API.items()
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -52,14 +69,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up Elco water heater entity."""
     coordinator: ElcoRemoconCoordinator = hass.data[DOMAIN][entry.entry_id]
-
-    # Only create water heater for flat R2 gateways with DHW
-    if not coordinator.client.is_flat_api:
-        _LOGGER.info(
-            "Skipping water heater for gateway %s — flat R2 write API required",
-            entry.data["gateway_id"],
-        )
-        return
 
     if not coordinator.data.dhw_available:
         _LOGGER.info(
@@ -83,7 +92,6 @@ class ElcoWaterHeater(CoordinatorEntity[ElcoRemoconCoordinator], WaterHeaterEnti
         WaterHeaterEntityFeature.TARGET_TEMPERATURE
         | WaterHeaterEntityFeature.OPERATION_MODE
     )
-    _attr_operation_list = OPERATION_LIST
 
     def __init__(
         self,
@@ -92,6 +100,14 @@ class ElcoWaterHeater(CoordinatorEntity[ElcoRemoconCoordinator], WaterHeaterEnti
         zone: str,
     ) -> None:
         super().__init__(coordinator)
+        if coordinator.client.is_flat_api:
+            self._operation_to_api = OPERATION_TO_API
+            self._api_to_operation = API_TO_OPERATION
+            self._attr_operation_list = OPERATION_LIST
+        else:
+            self._operation_to_api = BSB_OPERATION_TO_API
+            self._api_to_operation = BSB_API_TO_OPERATION
+            self._attr_operation_list = BSB_OPERATION_LIST
         self._attr_unique_id = entity_unique_id(gw_id, zone, "dhw_water_heater")
         self._attr_device_info = {
             "identifiers": {(DOMAIN, gw_id)},
@@ -126,7 +142,7 @@ class ElcoWaterHeater(CoordinatorEntity[ElcoRemoconCoordinator], WaterHeaterEnti
     def current_operation(self) -> str | None:
         """Return the current operation mode."""
         data = self.coordinator.data
-        return API_TO_OPERATION.get(data.dhw_mode, OPERATION_OFF)
+        return self._api_to_operation.get(int(data.dhw_mode), OPERATION_OFF)
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target DHW temperature."""
@@ -141,7 +157,7 @@ class ElcoWaterHeater(CoordinatorEntity[ElcoRemoconCoordinator], WaterHeaterEnti
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
         """Set new DHW operation mode."""
-        api_mode = OPERATION_TO_API.get(operation_mode)
+        api_mode = self._operation_to_api.get(operation_mode)
         if api_mode is None:
             _LOGGER.error("Unknown operation mode: %s", operation_mode)
             return
