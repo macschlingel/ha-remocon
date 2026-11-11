@@ -424,3 +424,35 @@ def test_dhw_mode_select_switches_from_off_to_timed_after_reload(platforms):
     asyncio.run(select.async_select_option("timed"))
 
     assert written_modes == [1]
+
+
+def test_bsb_gateway_gets_water_heater_with_on_eco_off(platforms):
+    """Legacy BSB gateways (Remocon-Net B) expose DHW writes via bsbPlantData,
+    so the water heater must be created with the Siemens Off/On/Eco modes."""
+    state = setup_entities(platforms, RemoconData(
+        dhw_available=True, dhw_enabled=True, dhw_mode=1,
+        dhw_comfort_temp=55.0, dhw_reduced_temp=40.0, dhw_temp=54.0,
+    ), flat_api=False)
+
+    assert len(state.water_heaters) == 1
+    heater = state.water_heaters[0]
+    assert heater._attr_operation_list == ["on", "eco", "off"]
+    assert heater.current_operation == "on"
+    assert heater.target_temperature == 55.0
+
+    written_modes = []
+    state.coordinator.client = types.SimpleNamespace(
+        is_flat_api=False, set_dhw_mode=written_modes.append,
+    )
+
+    async def add_executor_job(fn, *args):
+        return fn(*args)
+
+    state.hass.async_add_executor_job = add_executor_job
+    state.coordinator.async_request_refresh = lambda: asyncio.sleep(0)
+    heater.hass = state.hass
+
+    asyncio.run(heater.async_set_operation_mode("off"))
+    asyncio.run(heater.async_set_operation_mode("eco"))
+
+    assert written_modes == [0, 2]
