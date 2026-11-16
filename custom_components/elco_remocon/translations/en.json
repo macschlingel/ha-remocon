@@ -99,6 +99,8 @@
       "dhw_water_heater": {
         "name": "DHW Water Heater",
         "state": {
+          "on": "On",
+          "eco": "Eco",
           "timed": "Timed",
           "continuous": "Continuous",
           "off": "Off"

@@ -99,6 +99,8 @@
       "dhw_water_heater": {
         "name": "Warmwasser",
         "state": {
+          "on": "Ein",
+          "eco": "Eco",
           "timed": "Zeitgesteuert",
           "continuous": "Dauerbetrieb",
           "off": "Aus"
